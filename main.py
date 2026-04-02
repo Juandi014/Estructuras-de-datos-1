@@ -5,22 +5,26 @@ Entry point for SkyBalance AVL Flight Management System.
 
 Responsibilities:
   - Initializes Pygame and the main window.
-  - Owns the global application state (current screen, trees, depth).
+  - Owns the global application state (current screen, trees, depth, history).
   - Routes events and draw calls to the active screen.
   - Handles transitions between screens.
+  - Manages undo via HistoryStack (Ctrl+Z).
 """
 
 import pygame
 import sys
 
 from user_interface.color_scheme import (
-    WINDOW_W, WINDOW_H, FPS, BG_DEEP,
+    WINDOW_W, WINDOW_H, FPS,
     AMBER, TEXT_SECONDARY, BORDER,
+    NAV_H, NAV_PADDING,
     load_fonts,
 )
 from user_interface.screen_splash import SplashScreen
+from user_interface.screen_main import MainScreen
 from in_out.json_loader import load_file
 from logic.insertion_queue import InsertionQueue
+from logic.history_stack import HistoryStack
 from models.avl_tree import AVLTree
 from models.bst_tree import BSTTree
 
@@ -51,15 +55,17 @@ class App:
         self.fonts   = load_fonts()
 
         # Shared application state
-        self.avl_tree       = AVLTree()
-        self.bst_tree       = BSTTree()
+        self.avl_tree        = AVLTree()
+        self.bst_tree        = BSTTree()
         self.insertion_queue = InsertionQueue()
+        self.history         = HistoryStack()
         self.critical_depth  = 0
         self.current_screen  = SCREEN_SPLASH
 
-        # Screen instances — lazy: only splash created at startup
+        # Screen instances
         self.screens = {}
         self._init_splash()
+        self._init_main()
 
     # ------------------------------------------------------------------
     # Screen initialization
@@ -71,6 +77,14 @@ class App:
             fonts    = self.fonts,
             on_load  = self._handle_load_file,
             on_depth = self._handle_depth_change,
+        )
+
+    def _init_main(self) -> None:
+        """Creates the S1 main tree screen with its callbacks."""
+        self.screens[SCREEN_MAIN] = MainScreen(
+            fonts    = self.fonts,
+            avl_tree = self.avl_tree,
+            on_undo  = self._handle_undo,
         )
 
     # ------------------------------------------------------------------
@@ -86,21 +100,37 @@ class App:
         try:
             mode = load_file(self.avl_tree, self.bst_tree)
             self.avl_tree.critical_depth = self.critical_depth
-            splash.set_status(f"Archivo cargado correctamente — modo {mode}", success=True)
-            # TODO: transition to SCREEN_MAIN once S1 is implemented
-            # self.current_screen = SCREEN_MAIN
+            splash.set_status(f"Archivo cargado — modo {mode}", success=True)
+            self.current_screen = SCREEN_MAIN
         except ValueError as e:
             splash.set_status(str(e), success=False)
 
     def _handle_depth_change(self, value: int) -> None:
         """
-        Triggered when the user changes the critical depth value.
-        Updates the tree's penalty threshold immediately.
+        Triggered when the user changes the critical depth value on the splash.
+        Updates the tree's penalty threshold immediately if a tree is loaded.
         """
-        self.critical_depth = value
+        self.critical_depth          = value
         self.avl_tree.critical_depth = value
         if self.avl_tree.getRoot() is not None:
             self.avl_tree.applyDepthPenalty(value)
+
+    def _handle_undo(self) -> None:
+        """
+        Triggered by Ctrl+Z on S1.
+        Pops the last snapshot from the history stack and restores the tree.
+        """
+        entry = self.history.pop()
+        main  = self.screens[SCREEN_MAIN]
+        if entry is None:
+            main.set_status("Nada que deshacer.", success=False)
+            return
+        snapshot = entry["snapshot"]
+        self.avl_tree.root           = snapshot.root
+        self.avl_tree.stress_mode    = snapshot.stress_mode
+        self.avl_tree.critical_depth = snapshot.critical_depth
+        main.set_status(
+            f"Deshecho: {entry['action']} — {entry['code']}", success=True)
 
     # ------------------------------------------------------------------
     # Main loop
@@ -122,6 +152,8 @@ class App:
                 self._quit()
             if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self._quit()
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                self._handle_nav_click(event.pos)
             screen = self.screens.get(self.current_screen)
             if screen:
                 screen.handle_event(event)
@@ -133,7 +165,7 @@ class App:
             screen.update(dt_ms)
 
     def _draw(self) -> None:
-        """Renders the active screen and the nav bar."""
+        """Renders the active screen and the nav bar on top."""
         screen = self.screens.get(self.current_screen)
         if screen:
             screen.draw(self.surface)
@@ -146,31 +178,55 @@ class App:
     def _draw_nav(self) -> None:
         """
         Draws the top navigation bar with the logo and screen buttons.
-        Buttons are only active once a file has been loaded.
+        Buttons are only clickable once a file has been loaded.
         """
-        from user_interface.color_scheme import NAV_H, NAV_PADDING
         nav_rect = pygame.Rect(0, 0, WINDOW_W, NAV_H)
         pygame.draw.rect(self.surface, (10, 8, 6), nav_rect)
-        pygame.draw.line(self.surface, BORDER, (0, NAV_H - 1), (WINDOW_W, NAV_H - 1), 1)
+        pygame.draw.line(self.surface, BORDER,
+                         (0, NAV_H - 1), (WINDOW_W, NAV_H - 1), 1)
 
-        # Logo
         logo = self.fonts["label_md"].render("SKY//BALANCE", True, AMBER)
         self.surface.blit(logo, (NAV_PADDING, NAV_H // 2 - logo.get_height() // 2))
 
-        # Nav buttons (disabled until file loaded)
         tree_loaded = self.avl_tree.getRoot() is not None
         nav_items = [
-            ("AVL",     SCREEN_MAIN),
-            ("INSERT",  SCREEN_INSERT),
-            ("QUEUE",   SCREEN_QUEUE),
-            ("COMPARE", SCREEN_COMPARE),
+            ("AVL",      SCREEN_MAIN),
+            ("INSERTAR", SCREEN_INSERT),
+            ("COLA",     SCREEN_QUEUE),
+            ("COMPARAR", SCREEN_COMPARE),
         ]
         bx = 180
         for label, screen_id in nav_items:
-            color  = AMBER if self.current_screen == screen_id else (
-                     TEXT_SECONDARY if tree_loaded else (50, 40, 30))
-            btn    = self.fonts["label_sm"].render(label, True, color)
+            is_active = self.current_screen == screen_id
+            color = AMBER if is_active else (
+                    TEXT_SECONDARY if tree_loaded else (50, 40, 30))
+            btn = self.fonts["label_sm"].render(label, True, color)
             self.surface.blit(btn, (bx, NAV_H // 2 - btn.get_height() // 2))
+            bx += btn.get_width() + 24
+
+    def _handle_nav_click(self, pos: tuple) -> None:
+        """
+        Checks if a nav button was clicked and transitions to that screen.
+        Only works if a tree is loaded.
+        """
+        if self.avl_tree.getRoot() is None:
+            return
+        if pos[1] > NAV_H:
+            return
+
+        nav_items = [
+            ("AVL",      SCREEN_MAIN),
+            ("INSERTAR", SCREEN_INSERT),
+            ("COLA",     SCREEN_QUEUE),
+            ("COMPARAR", SCREEN_COMPARE),
+        ]
+        bx = 180
+        for label, screen_id in nav_items:
+            btn = self.fonts["label_sm"].render(label, True, AMBER)
+            btn_rect = pygame.Rect(bx, 0, btn.get_width(), NAV_H)
+            if btn_rect.collidepoint(pos):
+                self.current_screen = screen_id
+                return
             bx += btn.get_width() + 24
 
     # ------------------------------------------------------------------
