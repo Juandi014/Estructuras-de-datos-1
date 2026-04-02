@@ -33,9 +33,9 @@ class FlightNode:
         self.is_critical = False
 
         # --- Child pointers and parent (accessed via getters/setters) ---
-        self.__leftChild = None
-        self.__rightChild = None
-        self.__parent = None
+        self.leftChild = None
+        self.rightChild = None
+        self.parent = None
 
     # ------------------------------------------------------------------
     # Getters and setters for structural pointers
