@@ -81,13 +81,15 @@ class TreeRenderer:
         elif event.type == pygame.MOUSEMOTION and self._dragging:
             self._handle_drag(event.pos)
 
-    def draw(self, surface: pygame.Surface, root) -> None:
+    def draw(self, surface: pygame.Surface, root, stress_mode: bool = False) -> None:
         """
         Renders the full tree onto the given surface within the viewport.
-
+        
         Args:
-            surface : Main pygame surface.
-            root    : Root FlightNode of the AVL tree (or None).
+            surface     : Main pygame surface.
+            root        : Root FlightNode of the AVL tree (or None).
+            stress_mode : If True, renders degraded style (red edges, reddish nodes, warning).
+                          Default False maintains full compatibility with MainScreen.
         """
         # Clip drawing to the viewport area
         surface.set_clip(self.viewport)
@@ -98,15 +100,18 @@ class TreeRenderer:
             surface.set_clip(None)
             return
 
-        # Compute layout positions
+        # Compute layout positions (unchanged)
         self._positions = {}
         self._compute_positions(root, 0, 0, _subtree_width(root))
 
-        # Draw edges first (behind nodes)
-        self._draw_edges(surface, root)
-
-        # Draw nodes on top
-        self._draw_nodes(surface, root)
+        # Draw edges and nodes with stress support
+        if stress_mode:
+            self._draw_edges_stress(surface, root)
+            self._draw_nodes_stress(surface, root)
+            self._draw_stress_overlay(surface)
+        else:
+            self._draw_edges(surface, root)      # método original
+            self._draw_nodes(surface, root)      # método original
 
         surface.set_clip(None)
 
@@ -279,6 +284,77 @@ class TreeRenderer:
         dy = (pos[1] - self._drag_start[1]) / self.zoom
         self.offset_x = self._offset_start[0] + dx
         self.offset_y = self._offset_start[1] + dy
+
+    # ------------------------------------------------------------------
+    # Stress Mode Drawing (new small methods - no name conflict)
+    # ------------------------------------------------------------------
+
+    def _draw_edges_stress(self, surface: pygame.Surface, node) -> None:
+        """Draw edges in stress mode: thicker and red/critical color."""
+        if node is None:
+            return
+
+        sx, sy = self._tree_to_screen(self._positions[node.code])
+
+        for child in (node.getLeftChild(), node.getRightChild()):
+            if child is not None:
+                cx, cy = self._tree_to_screen(self._positions[child.code])
+                pygame.draw.line(surface, CRITICAL, (int(sx), int(sy)), (int(cx), int(cy)), 4)
+                self._draw_edges_stress(surface, child)
+
+    def _draw_nodes_stress(self, surface: pygame.Surface, node) -> None:
+        """Draw nodes in stress mode with reddish tint."""
+        if node is None:
+            return
+        sx, sy = self._tree_to_screen(self._positions[node.code])
+        self._draw_single_node_stress(surface, node, int(sx), int(sy))
+        self._draw_nodes_stress(surface, node.getLeftChild())
+        self._draw_nodes_stress(surface, node.getRightChild())
+
+    def _draw_single_node_stress(self, surface, node, sx: int, sy: int) -> None:
+        """Draw single node with stress visual: reddish fill and thicker border."""
+        r = int(NODE_RADIUS * self.zoom)
+        if r < 4:
+            return
+
+        # Stress colors
+        fill = CRITICAL
+        stroke = (255, 60, 40)
+
+        # Highlight override (search still works)
+        if self._highlighted is not None and node.code == self._highlighted:
+            fill = GREEN_TERM
+            stroke = (180, 255, 100)
+
+        pts = _hex_points(sx, sy, r)
+        pygame.draw.polygon(surface, _darken(fill, 0.15), pts)
+        pygame.draw.polygon(surface, stroke, pts, 4)
+
+        # Labels
+        if r >= 10:
+            font_size = max(8, int(11 * self.zoom))
+            font = pygame.font.SysFont("Courier New", font_size, bold=True)
+            code_surf = font.render(str(node.code), True, TEXT_PRIMARY)
+            surface.blit(code_surf, code_surf.get_rect(centerx=sx, centery=sy))
+
+        if r >= 16:
+            bf_size = max(7, int(9 * self.zoom))
+            bf_font = pygame.font.SysFont("Courier New", bf_size)
+            bf_col = CRITICAL if abs(node.balance_factor) > 1 else TEXT_DIM
+            bf_surf = bf_font.render(f"bf:{node.balance_factor}", True, bf_col)
+            surface.blit(bf_surf, bf_surf.get_rect(centerx=sx, top=sy + r + 2))
+
+        # Extra "DEFORMADO" label
+        if r >= 20:
+            warn_font = pygame.font.SysFont("Courier New", max(7, int(8 * self.zoom)))
+            warn = warn_font.render("DEFORMADO", True, (255, 220, 180))
+            surface.blit(warn, warn.get_rect(centerx=sx, top=sy + r + 18))
+
+    def _draw_stress_overlay(self, surface: pygame.Surface) -> None:
+        """Clear visual warning banner when stress mode is active."""
+        font = pygame.font.SysFont("Courier New", 18, bold=True)
+        text = font.render("MODO ESTRÉS ACTIVO — ÁRBOL DEGRADADO", True, CRITICAL)
+        surface.blit(text, (self.viewport.x + 20, self.viewport.y + 15))
 
 
 # ------------------------------------------------------------------
