@@ -25,6 +25,7 @@ from user_interface.screen_main import MainScreen
 from user_interface.screen_stress import StressScreen
 from user_interface.screen_versions import VersionsScreen
 from user_interface.screen_cancel import CancelScreen
+from user_interface.screen_rentability import RentabilityScreen
 from in_out.json_loader import load_file
 from logic.insertion_queue import InsertionQueue
 from logic.history_stack import HistoryStack
@@ -44,6 +45,7 @@ SCREEN_COMPARE = "compare"
 SCREEN_STRESS   = "stress"
 SCREEN_VERSIONS = "versions"
 SCREEN_CANCEL   = "cancel"
+SCREEN_RENT      = "rentability"
 
 class App:
     """
@@ -74,6 +76,7 @@ class App:
         self._init_stress()
         self._init_versions()
         self._init_cancel()
+        self._init_rentability()
 
     # ------------------------------------------------------------------
     # Screen initialization
@@ -114,6 +117,14 @@ class App:
     def _init_cancel(self) -> None:
         """Creates the S6 Mass Cancellation dialog screen."""
         self.screens[SCREEN_CANCEL] = CancelScreen(
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
+        )
+    
+    def _init_rentability(self) -> None:
+        """Creates the S7 Intelligent Elimination by Rentability screen."""
+        self.screens[SCREEN_RENT] = RentabilityScreen(
             fonts             = self.fonts,
             avl_tree          = self.avl_tree,
             on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
@@ -260,6 +271,7 @@ class App:
             ("ESTRÉS",   SCREEN_STRESS),
             ("VERSIONES", SCREEN_VERSIONS),
             ("CANCELAR",  SCREEN_CANCEL),
+            ("RENTABILIDAD", SCREEN_RENT),
         ]
         bx = 180
         for label, screen_id in nav_items:

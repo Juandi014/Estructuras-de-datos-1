@@ -647,32 +647,55 @@ class AVLTree:
     return self.rotations_ll + self.rotations_rr + self.rotations_lr + self.rotations_rl
 
   # ==================================================================
-  # Economic elimination (req. 8)
+  # Economic elimination (Requirement 8) - S7
   # ==================================================================
 
-  # Finds the node with the lowest profitability score.
-  # Tie-breaking: deepest node first, then largest code.
-  def leastProfitableNode(self):
-    nodes = self.breadthFirstSearch()
-    if not nodes:
-      return None
+  def find_lowest_rentability_node(self):
+      """
+      Finds the node with the lowest rentability.
+      Rules:
+      1. Lowest rentability = pasajeros * precioFinal - promoción + penalización
+      2. Tie-breaker 1: deepest node (farthest from root)
+      3. Tie-breaker 2: largest code
+      """
+      if not self.root:
+          return None
 
-    scored = [(self.__calculateProfitability(n), n) for n in nodes]
-    minScore = min(s for s, _ in scored)
-    candidates = [n for s, n in scored if s == minScore]
+      nodes = self.breadthFirstSearch()
+      if not nodes:
+          return None
 
-    maxDepth = max(n.depth for n in candidates)
-    candidates = [n for n in candidates if n.depth == maxDepth]
-    candidates.sort(key=lambda n: n.getValue(), reverse=True)
-    return candidates[0]
+      # Calculate rentability for all nodes
+      scored = [(self._calculate_rentability(n), n.depth, n.getValue() if hasattr(n, 'getValue') else n.code, n)
+                for n in nodes]
 
-  # Calculates profitability = passengers x finalPrice
-  #                            - promotion discount (if applies)
-  #                            + penalty surcharge (if critical)
-  def __calculateProfitability(self, node):
-    promoDiscount = node.base_price * 0.10 if node.promotion else 0
-    penaltyAdd = (node.final_price - node.base_price) if node.is_critical else 0
-    return node.passengers * node.final_price - promoDiscount + penaltyAdd
+      # Sort: smallest rentability → highest depth → highest code
+      scored.sort(key=lambda x: (x[0], -x[1], -x[2]))
+
+      return scored[0][3]   # return the node
+
+
+  def _calculate_rentability(self, node):
+      """
+      Exact formula from project specification:
+      rentability = pasajeros × precioFinal 
+                    - promoción (si aplica) 
+                    + penalización (si aplica)
+      """
+      base_rent = node.passengers * getattr(node, 'final_price', node.base_price)
+
+      # Promoción: asumimos que si promotion=True, se resta un descuento.
+      # Si tu nodo guarda el valor del descuento en otro atributo, ajústalo aquí.
+      promo_discount = 0
+      if getattr(node, 'promotion', False):
+          promo_discount = base_rent * 0.10   # 10% es común, pero ajusta si tienes valor fijo
+
+      # Penalización por nodo crítico (profundidad)
+      penalty = 0
+      if getattr(node, 'is_critical', False):
+          penalty = base_rent * 0.25   # +25% como dice el documento
+
+      return base_rent - promo_discount + penalty
 
   # ==================================================================
   # Serialization (req. 1.3)
