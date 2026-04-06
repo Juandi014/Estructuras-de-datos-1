@@ -23,6 +23,7 @@ from user_interface.color_scheme import (
 from user_interface.screen_splash import SplashScreen
 from user_interface.screen_main import MainScreen
 from user_interface.screen_stress import StressScreen
+from user_interface.screen_versions import VersionsScreen
 from in_out.json_loader import load_file
 from logic.insertion_queue import InsertionQueue
 from logic.history_stack import HistoryStack
@@ -40,6 +41,7 @@ SCREEN_INSERT  = "insert"
 SCREEN_QUEUE   = "queue"
 SCREEN_COMPARE = "compare"
 SCREEN_STRESS   = "stress"
+SCREEN_VERSIONS = "versions"
 
 
 class App:
@@ -69,6 +71,7 @@ class App:
         self._init_splash()
         self._init_main()
         self._init_stress()
+        self._init_versions()
 
     # ------------------------------------------------------------------
     # Screen initialization
@@ -96,6 +99,14 @@ class App:
             fonts              = self.fonts,
             avl_tree           = self.avl_tree,
             on_switch_to_main  = lambda: self._switch_to_screen(SCREEN_MAIN)
+        )
+
+    def _init_versions(self) -> None:
+        """Creates the S4 Versions screen."""
+        self.screens[SCREEN_VERSIONS] = VersionsScreen(
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
         )
 
     # ------------------------------------------------------------------
@@ -237,6 +248,7 @@ class App:
             ("COLA",     SCREEN_QUEUE),
             ("COMPARAR", SCREEN_COMPARE),
             ("ESTRÉS",   SCREEN_STRESS),
+            ("VERSIONES", SCREEN_VERSIONS),
         ]
         bx = 180
         for label, screen_id in nav_items:
