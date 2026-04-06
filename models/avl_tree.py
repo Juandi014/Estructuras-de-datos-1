@@ -1,6 +1,6 @@
 import copy
 from models.flight_node import FlightNode
-
+from datetime import datetime
 
 class AVLTree:
 
@@ -25,6 +25,7 @@ class AVLTree:
 
     # Penalty percentage applied to critical nodes (req. 6).
     self.PENALTY_PERCENT = 0.25
+    self.versions = {}   # name -> version_info
 
   # Método para retornar la raiz del árbol
   def getRoot(self):
@@ -716,6 +717,94 @@ class AVLTree:
     for flightData in flights:
       node = FlightNode.fromDict(flightData)
       self.insert(node)
+
+  # ------------------------------------------------------------------
+  # Sistema de Versionado Persistente (S4)
+  # ------------------------------------------------------------------
+
+  def save_version(self, name: str) -> bool:
+      """
+      Saves the current tree state with a given name.
+      Returns True if saved successfully, False if name already exists.
+      """
+      if not name or name.strip() == "":
+          return False
+      name = name.strip()
+
+      if name in self.versions:
+          return False
+
+      snapshot = self._deep_copy_tree(self.root)
+      self.versions[name] = {
+          "snapshot": snapshot,
+          "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+          "node_count": self.nodeCount(),
+          "height": self.getHeight()
+      }
+      return True
+
+  def load_version(self, name: str) -> bool:
+      """
+      Restores the tree from a previously saved version.
+      Returns True if successful.
+      """
+      if name not in self.versions:
+          return False
+
+      self.root = self._deep_copy_tree(self.versions[name]["snapshot"])
+      # Re-calculate heights and balance factors after restore
+      self._update_heights_and_balances(self.root)
+      return True
+
+  def get_versions(self) -> dict:
+      """Returns dictionary of saved versions for UI display."""
+      return self.versions
+
+  def _deep_copy_tree(self, node):
+      """
+      Creates a deep copy of the tree structure.
+      Preserves all node attributes: code, height, balance_factor, 
+      left, right, and flight data (precio, pasajeros, etc.).
+      """
+      if node is None:
+          return None
+
+      new_node = FlightNode(
+          code=node.code,
+          origin=node.origin,
+          destination=node.destination,
+          departure_time=node.departure_time,
+          base_price=node.base_price,
+          passengers=node.passengers,
+          # Agrega aquí cualquier otro atributo que tenga tu FlightNode
+          promotion=getattr(node, 'promotion', False),
+          alert=getattr(node, 'alert', False),
+          priority=getattr(node, 'priority', 1)
+      )
+
+      # Copy AVL-specific properties
+      new_node.height = node.height
+      new_node.balance_factor = node.balance_factor
+      new_node.is_critical = getattr(node, 'is_critical', False)
+      new_node.final_price = getattr(node, 'final_price', node.base_price)
+
+      new_node.left = self._deep_copy_tree(node.left)
+      new_node.right = self._deep_copy_tree(node.right)
+
+      return new_node
+
+  def _update_heights_and_balances(self, node):
+      """Recalcula alturas y factores de equilibrio después de restaurar."""
+      if node is None:
+          return 0
+
+      left_h = self._update_heights_and_balances(node.left)
+      right_h = self._update_heights_and_balances(node.right)
+
+      node.height = 1 + max(left_h, right_h)
+      node.balance_factor = right_h - left_h
+
+      return node.height
 
   # ==================================================================
   # Deep copy helper (used by versioning system)
