@@ -24,6 +24,7 @@ from user_interface.screen_splash import SplashScreen
 from user_interface.screen_main import MainScreen
 from user_interface.screen_stress import StressScreen
 from user_interface.screen_versions import VersionsScreen
+from user_interface.screen_cancel import CancelScreen
 from in_out.json_loader import load_file
 from logic.insertion_queue import InsertionQueue
 from logic.history_stack import HistoryStack
@@ -42,7 +43,7 @@ SCREEN_QUEUE   = "queue"
 SCREEN_COMPARE = "compare"
 SCREEN_STRESS   = "stress"
 SCREEN_VERSIONS = "versions"
-
+SCREEN_CANCEL   = "cancel"
 
 class App:
     """
@@ -72,6 +73,7 @@ class App:
         self._init_main()
         self._init_stress()
         self._init_versions()
+        self._init_cancel()
 
     # ------------------------------------------------------------------
     # Screen initialization
@@ -104,6 +106,14 @@ class App:
     def _init_versions(self) -> None:
         """Creates the S4 Versions screen."""
         self.screens[SCREEN_VERSIONS] = VersionsScreen(
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
+        )
+
+    def _init_cancel(self) -> None:
+        """Creates the S6 Mass Cancellation dialog screen."""
+        self.screens[SCREEN_CANCEL] = CancelScreen(
             fonts             = self.fonts,
             avl_tree          = self.avl_tree,
             on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
@@ -249,6 +259,7 @@ class App:
             ("COMPARAR", SCREEN_COMPARE),
             ("ESTRÉS",   SCREEN_STRESS),
             ("VERSIONES", SCREEN_VERSIONS),
+            ("CANCELAR",  SCREEN_CANCEL),
         ]
         bx = 180
         for label, screen_id in nav_items:
