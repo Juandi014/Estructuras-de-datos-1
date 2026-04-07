@@ -21,7 +21,7 @@ from user_interface.modal_ui import UIModal
 class RentabilityScreen:
     """
     S7 - Intelligent Elimination by Economic Impact (Requirement 8).
-    Uses existing avl_tree.leastProfitableNode() and cancel_flight().
+    Uses existing avl_tree.leastProfitableNode() and cancelSubtree().
     """
 
     def __init__(self, fonts: dict, avl_tree, on_switch_to_main):
@@ -85,7 +85,7 @@ class RentabilityScreen:
 
     def _show_confirmation_modal(self, node):
         """Display modal with node information and rentability."""
-        rentability = self.avl_tree._calculateProfitability(node)   # using your existing private method
+        rentability = self.avl_tree._calculate_rentability(node)   # using your existing private method
 
         title = f"MENOR RENTABILIDAD DETECTADA: {node.code}"
 
@@ -107,7 +107,7 @@ class RentabilityScreen:
 
         try:
             # Usamos el método que ya tienes implementado
-            self.avl_tree.cancel_flight(code)
+            self.avl_tree.cancelSubtree(code)
 
             self.set_status(f"Nodo {code} (menor rentabilidad) y su subrama eliminados correctamente.", True)
         except Exception as e:

@@ -31,7 +31,7 @@ from logic.insertion_queue import InsertionQueue
 from logic.history_stack import HistoryStack
 from models.avl_tree import AVLTree
 from models.bst_tree import BSTTree
-
+from user_interface.screen_queue import QueueScreen
 
 # ------------------------------------------------------------------
 # Screen identifiers
@@ -80,7 +80,7 @@ class App:
         self._init_versions()
         self._init_cancel()
         self._init_rentability()
-
+        self._init_queue()
     # ------------------------------------------------------------------
     # Screen initialization
     # ------------------------------------------------------------------
@@ -131,6 +131,14 @@ class App:
         self.screens[SCREEN_RENT] = RentabilityScreen(
             fonts             = self.fonts,
             avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
+        )
+    def _init_queue(self) -> None:
+        """Creates the Queue screen (Requirement 3 - Cola de Inserciones)."""
+        self.screens[SCREEN_QUEUE] = QueueScreen(
+            fonts           = self.fonts,
+            avl_tree        = self.avl_tree,
+            insertion_queue = self.insertion_queue,
             on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
         )
 

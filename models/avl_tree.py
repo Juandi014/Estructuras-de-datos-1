@@ -811,8 +811,8 @@ class AVLTree:
       new_node.is_critical = getattr(node, 'is_critical', False)
       new_node.final_price = getattr(node, 'final_price', node.base_price)
 
-      new_node.left = self._deep_copy_tree(node.left)
-      new_node.right = self._deep_copy_tree(node.right)
+      new_node.leftChild = self._deep_copy_tree(node.getLeftChild())
+      new_node.rightChild = self._deep_copy_tree(node.getRightChild())
 
       return new_node
 
@@ -821,8 +821,8 @@ class AVLTree:
       if node is None:
           return 0
 
-      left_h = self._update_heights_and_balances(node.left)
-      right_h = self._update_heights_and_balances(node.right)
+      left_h = self._update_heights_and_balances(node.getLeftChild())
+      right_h = self._update_heights_and_balances(node.getRightChild())
 
       node.height = 1 + max(left_h, right_h)
       node.balance_factor = right_h - left_h
