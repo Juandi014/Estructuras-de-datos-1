@@ -89,7 +89,7 @@ class CancelScreen:
             return
 
         # Usamos el método que ya tienes
-        node = self.avl_tree.find_node(code_str)
+        node = self.avl_tree.search(code_str)
 
         if node is None:
             self.set_status(f"Vuelo {code_str} no encontrado en el árbol.", False)
@@ -120,7 +120,7 @@ class CancelScreen:
 
         try:
             # Aquí llamamos directamente al método que ya implementaste
-            self.avl_tree.cancel_flight(code)
+            self.avl_tree.cancelSubtree(code)
 
             self.set_status(f"Vuelo {code} y toda su subrama fueron cancelados correctamente.", True)
             self._search_input.value = ""   # limpiar campo
