@@ -49,9 +49,10 @@ class SplashScreen:
                    Signature: on_depth(value: int)
     """
 
-    def __init__(self, fonts: dict, on_load, on_depth):
+    def __init__(self, fonts: dict, on_load, on_build, on_depth):
         self.fonts      = fonts
         self.on_load    = on_load
+        self.on_build   = on_build
         self.on_depth   = on_depth
 
         # Typewriter state
@@ -79,6 +80,7 @@ class SplashScreen:
         # Layout — computed once in first draw call
         self._card_rect     = None
         self._load_btn      = None
+        self._build_btn     = None
         self._depth_rect    = None
         self._minus_btn     = None
         self._plus_btn      = None
@@ -196,7 +198,7 @@ class SplashScreen:
 
         cx    = WINDOW_W // 2
         cy    = WINDOW_H // 2 + 20
-        cw, ch = 380, 200
+        cw, ch = 380, 248
 
         card_rect = pygame.Rect(cx - cw // 2, cy - ch // 2, cw, ch)
         self._card_rect = card_rect
@@ -215,8 +217,14 @@ class SplashScreen:
         _draw_button(surface, btn_rect, "CARGAR ARCHIVO JSON", self.fonts["label_md"],
                      AMBER, BG_DEEP, AMBER)
 
+        # Build from scratch button
+        build_rect = pygame.Rect(card_rect.x + 16, card_rect.y + 80, cw - 32, BTN_H)
+        self._build_btn = build_rect
+        _draw_button(surface, build_rect, "CREAR ÁRBOL DESDE CERO", self.fonts["label_md"],
+                     BG_SURFACE2, TEXT_SECONDARY, BORDER)
+
         # Separator
-        sep_y = card_rect.y + 90
+        sep_y = card_rect.y + 128
         pygame.draw.line(surface, BORDER,
                          (card_rect.x + 16, sep_y),
                          (card_rect.right - 16, sep_y), 1)
@@ -266,7 +274,7 @@ class SplashScreen:
         if not self._status:
             return
         surf = self.fonts["body_sm"].render(self._status, True, self._status_color)
-        surface.blit(surf, surf.get_rect(centerx=WINDOW_W // 2, top=WINDOW_H // 2 + 140))
+        surface.blit(surf, surf.get_rect(centerx=WINDOW_W // 2, top=WINDOW_H // 2 + 168))
 
     # ------------------------------------------------------------------
     # Input handlers
@@ -276,6 +284,10 @@ class SplashScreen:
         """Dispatches click events to the correct control."""
         if self._load_btn and self._load_btn.collidepoint(pos):
             self.on_load()
+            return
+
+        if self._build_btn and self._build_btn.collidepoint(pos):
+            self.on_build()
             return
 
         if self._minus_btn and self._minus_btn.collidepoint(pos):

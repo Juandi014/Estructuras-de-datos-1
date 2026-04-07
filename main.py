@@ -42,6 +42,8 @@ SCREEN_MAIN    = "main"
 SCREEN_INSERT  = "insert"
 SCREEN_QUEUE   = "queue"
 SCREEN_COMPARE = "compare"
+SCREEN_BUILD   = "build"
+
 SCREEN_STRESS   = "stress"
 SCREEN_VERSIONS = "versions"
 SCREEN_CANCEL   = "cancel"
@@ -73,6 +75,7 @@ class App:
         self.screens = {}
         self._init_splash()
         self._init_main()
+        self._init_build()
         self._init_stress()
         self._init_versions()
         self._init_cancel()
@@ -87,6 +90,7 @@ class App:
         self.screens[SCREEN_SPLASH] = SplashScreen(
             fonts    = self.fonts,
             on_load  = self._handle_load_file,
+            on_build = self._handle_build_from_scratch,
             on_depth = self._handle_depth_change,
         )
 
@@ -130,6 +134,14 @@ class App:
             on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
         )
 
+    def _init_build(self) -> None:
+        """Creates the S2 build-from-scratch screen (reuses MainScreen)."""
+        self.screens[SCREEN_BUILD] = MainScreen(
+            fonts    = self.fonts,
+            avl_tree = self.avl_tree,
+            on_undo  = self._handle_undo,
+        )
+
     # ------------------------------------------------------------------
     # Callbacks passed to screens
     # ------------------------------------------------------------------
@@ -147,6 +159,17 @@ class App:
             self.current_screen = SCREEN_MAIN
         except ValueError as e:
             splash.set_status(str(e), success=False)
+
+    def _handle_build_from_scratch(self) -> None:
+        """
+        Triggered by the CREAR DESDE CERO button.
+        Resets both trees and transitions to S2 (build screen).
+        """
+        self.avl_tree.__init__()
+        self.bst_tree.__init__()
+        self.history.clear()
+        self.avl_tree.critical_depth = self.critical_depth
+        self.current_screen = SCREEN_BUILD
 
     def _handle_depth_change(self, value: int) -> None:
         """
@@ -238,11 +261,14 @@ class App:
 
         tree_loaded = self.avl_tree.getRoot() is not None
         nav_items = [
-            ("AVL",      SCREEN_MAIN),
-            ("INSERTAR", SCREEN_INSERT),
-            ("COLA",     SCREEN_QUEUE),
-            ("COMPARAR", SCREEN_COMPARE),
-            ("ESTRÉS",   SCREEN_STRESS),
+            ("AVL",       SCREEN_MAIN),
+            ("CONSTRUIR", SCREEN_BUILD),
+            ("COLA",      SCREEN_QUEUE),
+            ("COMPARAR",  SCREEN_COMPARE),
+            ("ESTRÉS",    SCREEN_STRESS),
+            ("VERSIONES", SCREEN_VERSIONS),
+            ("CANCELAR",  SCREEN_CANCEL),
+            ("RENTABILIDAD", SCREEN_RENT),
         ]
         bx = 180
         for label, screen_id in nav_items:
@@ -264,15 +290,15 @@ class App:
             return
 
         nav_items = [
-            ("AVL",      SCREEN_MAIN),
-            ("INSERTAR", SCREEN_INSERT),
-            ("COLA",     SCREEN_QUEUE),
-            ("COMPARAR", SCREEN_COMPARE),
-            ("ESTRÉS",   SCREEN_STRESS),
+            ("AVL",       SCREEN_MAIN),
+            ("CONSTRUIR", SCREEN_BUILD),
+            ("COLA",      SCREEN_QUEUE),
+            ("COMPARAR",  SCREEN_COMPARE),
+            ("ESTRÉS",    SCREEN_STRESS),
             ("VERSIONES", SCREEN_VERSIONS),
             ("CANCELAR",  SCREEN_CANCEL),
             ("RENTABILIDAD", SCREEN_RENT),
-        ]
+        ]   
         bx = 180
         for label, screen_id in nav_items:
             btn = self.fonts["label_sm"].render(label, True, AMBER)
