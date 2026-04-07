@@ -1,6 +1,6 @@
 import copy
 from models.flight_node import FlightNode
-
+from datetime import datetime
 
 class AVLTree:
 
@@ -25,6 +25,7 @@ class AVLTree:
 
     # Penalty percentage applied to critical nodes (req. 6).
     self.PENALTY_PERCENT = 0.25
+    self.versions = {}   # name -> version_info
 
   # Método para retornar la raiz del árbol
   def getRoot(self):
@@ -646,32 +647,55 @@ class AVLTree:
     return self.rotations_ll + self.rotations_rr + self.rotations_lr + self.rotations_rl
 
   # ==================================================================
-  # Economic elimination (req. 8)
+  # Economic elimination (Requirement 8) - S7
   # ==================================================================
 
-  # Finds the node with the lowest profitability score.
-  # Tie-breaking: deepest node first, then largest code.
-  def leastProfitableNode(self):
-    nodes = self.breadthFirstSearch()
-    if not nodes:
-      return None
+  def find_lowest_rentability_node(self):
+      """
+      Finds the node with the lowest rentability.
+      Rules:
+      1. Lowest rentability = pasajeros * precioFinal - promoción + penalización
+      2. Tie-breaker 1: deepest node (farthest from root)
+      3. Tie-breaker 2: largest code
+      """
+      if not self.root:
+          return None
 
-    scored = [(self.__calculateProfitability(n), n) for n in nodes]
-    minScore = min(s for s, _ in scored)
-    candidates = [n for s, n in scored if s == minScore]
+      nodes = self.breadthFirstSearch()
+      if not nodes:
+          return None
 
-    maxDepth = max(n.depth for n in candidates)
-    candidates = [n for n in candidates if n.depth == maxDepth]
-    candidates.sort(key=lambda n: n.getValue(), reverse=True)
-    return candidates[0]
+      # Calculate rentability for all nodes
+      scored = [(self._calculate_rentability(n), n.depth, n.getValue() if hasattr(n, 'getValue') else n.code, n)
+                for n in nodes]
 
-  # Calculates profitability = passengers x finalPrice
-  #                            - promotion discount (if applies)
-  #                            + penalty surcharge (if critical)
-  def __calculateProfitability(self, node):
-    promoDiscount = node.base_price * 0.10 if node.promotion else 0
-    penaltyAdd = (node.final_price - node.base_price) if node.is_critical else 0
-    return node.passengers * node.final_price - promoDiscount + penaltyAdd
+      # Sort: smallest rentability → highest depth → highest code
+      scored.sort(key=lambda x: (x[0], -x[1], -x[2]))
+
+      return scored[0][3]   # return the node
+
+
+  def _calculate_rentability(self, node):
+      """
+      Exact formula from project specification:
+      rentability = pasajeros × precioFinal 
+                    - promoción (si aplica) 
+                    + penalización (si aplica)
+      """
+      base_rent = node.passengers * getattr(node, 'final_price', node.base_price)
+
+      # Promoción: asumimos que si promotion=True, se resta un descuento.
+      # Si tu nodo guarda el valor del descuento en otro atributo, ajústalo aquí.
+      promo_discount = 0
+      if getattr(node, 'promotion', False):
+          promo_discount = base_rent * 0.10   # 10% es común, pero ajusta si tienes valor fijo
+
+      # Penalización por nodo crítico (profundidad)
+      penalty = 0
+      if getattr(node, 'is_critical', False):
+          penalty = base_rent * 0.25   # +25% como dice el documento
+
+      return base_rent - promo_discount + penalty
 
   # ==================================================================
   # Serialization (req. 1.3)
@@ -716,6 +740,94 @@ class AVLTree:
     for flightData in flights:
       node = FlightNode.fromDict(flightData)
       self.insert(node)
+
+  # ------------------------------------------------------------------
+  # Sistema de Versionado Persistente (S4)
+  # ------------------------------------------------------------------
+
+  def save_version(self, name: str) -> bool:
+      """
+      Saves the current tree state with a given name.
+      Returns True if saved successfully, False if name already exists.
+      """
+      if not name or name.strip() == "":
+          return False
+      name = name.strip()
+
+      if name in self.versions:
+          return False
+
+      snapshot = self._deep_copy_tree(self.root)
+      self.versions[name] = {
+          "snapshot": snapshot,
+          "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+          "node_count": self.nodeCount(),
+          "height": self.getHeight()
+      }
+      return True
+
+  def load_version(self, name: str) -> bool:
+      """
+      Restores the tree from a previously saved version.
+      Returns True if successful.
+      """
+      if name not in self.versions:
+          return False
+
+      self.root = self._deep_copy_tree(self.versions[name]["snapshot"])
+      # Re-calculate heights and balance factors after restore
+      self._update_heights_and_balances(self.root)
+      return True
+
+  def get_versions(self) -> dict:
+      """Returns dictionary of saved versions for UI display."""
+      return self.versions
+
+  def _deep_copy_tree(self, node):
+      """
+      Creates a deep copy of the tree structure.
+      Preserves all node attributes: code, height, balance_factor, 
+      left, right, and flight data (precio, pasajeros, etc.).
+      """
+      if node is None:
+          return None
+
+      new_node = FlightNode(
+          code=node.code,
+          origin=node.origin,
+          destination=node.destination,
+          departure_time=node.departure_time,
+          base_price=node.base_price,
+          passengers=node.passengers,
+          # Agrega aquí cualquier otro atributo que tenga tu FlightNode
+          promotion=getattr(node, 'promotion', False),
+          alert=getattr(node, 'alert', False),
+          priority=getattr(node, 'priority', 1)
+      )
+
+      # Copy AVL-specific properties
+      new_node.height = node.height
+      new_node.balance_factor = node.balance_factor
+      new_node.is_critical = getattr(node, 'is_critical', False)
+      new_node.final_price = getattr(node, 'final_price', node.base_price)
+
+      new_node.left = self._deep_copy_tree(node.left)
+      new_node.right = self._deep_copy_tree(node.right)
+
+      return new_node
+
+  def _update_heights_and_balances(self, node):
+      """Recalcula alturas y factores de equilibrio después de restaurar."""
+      if node is None:
+          return 0
+
+      left_h = self._update_heights_and_balances(node.left)
+      right_h = self._update_heights_and_balances(node.right)
+
+      node.height = 1 + max(left_h, right_h)
+      node.balance_factor = right_h - left_h
+
+      return node.height
 
   # ==================================================================
   # Deep copy helper (used by versioning system)

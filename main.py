@@ -22,6 +22,10 @@ from user_interface.color_scheme import (
 )
 from user_interface.screen_splash import SplashScreen
 from user_interface.screen_main import MainScreen
+from user_interface.screen_stress import StressScreen
+from user_interface.screen_versions import VersionsScreen
+from user_interface.screen_cancel import CancelScreen
+from user_interface.screen_rentability import RentabilityScreen
 from in_out.json_loader import load_file
 from logic.insertion_queue import InsertionQueue
 from logic.history_stack import HistoryStack
@@ -40,6 +44,10 @@ SCREEN_QUEUE   = "queue"
 SCREEN_COMPARE = "compare"
 SCREEN_BUILD   = "build"
 
+SCREEN_STRESS   = "stress"
+SCREEN_VERSIONS = "versions"
+SCREEN_CANCEL   = "cancel"
+SCREEN_RENT      = "rentability"
 
 class App:
     """
@@ -68,6 +76,10 @@ class App:
         self._init_splash()
         self._init_main()
         self._init_build()
+        self._init_stress()
+        self._init_versions()
+        self._init_cancel()
+        self._init_rentability()
 
     # ------------------------------------------------------------------
     # Screen initialization
@@ -88,6 +100,38 @@ class App:
             fonts    = self.fonts,
             avl_tree = self.avl_tree,
             on_undo  = self._handle_undo,
+        )
+    
+    def _init_stress(self) -> None:
+        """Creates the S3 Stress Mode screen."""
+        self.screens[SCREEN_STRESS] = StressScreen(
+            fonts              = self.fonts,
+            avl_tree           = self.avl_tree,
+            on_switch_to_main  = lambda: self._switch_to_screen(SCREEN_MAIN)
+        )
+
+    def _init_versions(self) -> None:
+        """Creates the S4 Versions screen."""
+        self.screens[SCREEN_VERSIONS] = VersionsScreen(
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
+        )
+
+    def _init_cancel(self) -> None:
+        """Creates the S6 Mass Cancellation dialog screen."""
+        self.screens[SCREEN_CANCEL] = CancelScreen(
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
+        )
+    
+    def _init_rentability(self) -> None:
+        """Creates the S7 Intelligent Elimination by Rentability screen."""
+        self.screens[SCREEN_RENT] = RentabilityScreen(
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
         )
 
     def _init_build(self) -> None:
@@ -153,6 +197,11 @@ class App:
         self.avl_tree.critical_depth = snapshot.critical_depth
         main.set_status(
             f"Deshecho: {entry['action']} — {entry['code']}", success=True)
+        
+    def _switch_to_screen(self, screen_id: str) -> None:
+        """Safe way to change current screen."""
+        if screen_id in self.screens:
+            self.current_screen = screen_id
 
     # ------------------------------------------------------------------
     # Main loop
@@ -216,6 +265,10 @@ class App:
             ("CONSTRUIR", SCREEN_BUILD),
             ("COLA",      SCREEN_QUEUE),
             ("COMPARAR",  SCREEN_COMPARE),
+            ("ESTRÉS",    SCREEN_STRESS),
+            ("VERSIONES", SCREEN_VERSIONS),
+            ("CANCELAR",  SCREEN_CANCEL),
+            ("RENTABILIDAD", SCREEN_RENT),
         ]
         bx = 180
         for label, screen_id in nav_items:
@@ -241,7 +294,11 @@ class App:
             ("CONSTRUIR", SCREEN_BUILD),
             ("COLA",      SCREEN_QUEUE),
             ("COMPARAR",  SCREEN_COMPARE),
-        ]
+            ("ESTRÉS",    SCREEN_STRESS),
+            ("VERSIONES", SCREEN_VERSIONS),
+            ("CANCELAR",  SCREEN_CANCEL),
+            ("RENTABILIDAD", SCREEN_RENT),
+        ]   
         bx = 180
         for label, screen_id in nav_items:
             btn = self.fonts["label_sm"].render(label, True, AMBER)
