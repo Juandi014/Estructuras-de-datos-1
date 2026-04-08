@@ -26,6 +26,8 @@ from user_interface.screen_stress import StressScreen
 from user_interface.screen_versions import VersionsScreen
 from user_interface.screen_cancel import CancelScreen
 from user_interface.screen_rentability import RentabilityScreen
+from user_interface.screen_home import HomeScreen
+from user_interface.screen_compare import CompareScreen
 from in_out.json_loader import load_file
 from logic.insertion_queue import InsertionQueue
 from logic.history_stack import HistoryStack
@@ -38,6 +40,7 @@ from user_interface.screen_queue import QueueScreen
 # ------------------------------------------------------------------
 
 SCREEN_SPLASH  = "splash"
+SCREEN_HOME = "home"
 SCREEN_MAIN    = "main"
 SCREEN_INSERT  = "insert"
 SCREEN_QUEUE   = "queue"
@@ -74,6 +77,8 @@ class App:
         # Screen instances
         self.screens = {}
         self._init_splash()
+        self._init_home()
+        self._init_compare()
         self._init_main()
         self._init_build()
         self._init_stress()
@@ -94,12 +99,28 @@ class App:
             on_depth = self._handle_depth_change,
         )
 
+    def _init_home(self) -> None:
+        """New Home/Dashboard screen (after loading a file)."""
+        self.screens[SCREEN_HOME] = HomeScreen(
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_screen  = self._switch_to_screen
+        )
+
     def _init_main(self) -> None:
         """Creates the S1 main tree screen with its callbacks."""
         self.screens[SCREEN_MAIN] = MainScreen(
             fonts    = self.fonts,
             avl_tree = self.avl_tree,
             on_undo  = self._handle_undo,
+        )
+    
+    def _init_compare(self) -> None:
+        self.screens[SCREEN_COMPARE] = CompareScreen(
+            fonts=self.fonts,
+            avl_tree=self.avl_tree,
+            bst_tree=self.bst_tree,
+            on_switch_screen=self._switch_to_screen
         )
     
     def _init_stress(self) -> None:
@@ -164,7 +185,7 @@ class App:
             mode = load_file(self.avl_tree, self.bst_tree)
             self.avl_tree.critical_depth = self.critical_depth
             splash.set_status(f"Archivo cargado — modo {mode}", success=True)
-            self.current_screen = SCREEN_MAIN
+            self.current_screen = SCREEN_HOME
         except ValueError as e:
             splash.set_status(str(e), success=False)
 
@@ -177,7 +198,7 @@ class App:
         self.bst_tree.__init__()
         self.history.clear()
         self.avl_tree.critical_depth = self.critical_depth
-        self.current_screen = SCREEN_BUILD
+        self.current_screen = SCREEN_HOME
 
     def _handle_depth_change(self, value: int) -> None:
         """
@@ -270,6 +291,7 @@ class App:
         tree_loaded = self.avl_tree.getRoot() is not None
         nav_items = [
             ("AVL",       SCREEN_MAIN),
+            ("HOME",      SCREEN_HOME),
             ("CONSTRUIR", SCREEN_BUILD),
             ("COLA",      SCREEN_QUEUE),
             ("COMPARAR",  SCREEN_COMPARE),
@@ -299,6 +321,7 @@ class App:
 
         nav_items = [
             ("AVL",       SCREEN_MAIN),
+            ("HOME",      SCREEN_HOME),
             ("CONSTRUIR", SCREEN_BUILD),
             ("COLA",      SCREEN_QUEUE),
             ("COMPARAR",  SCREEN_COMPARE),
@@ -306,6 +329,7 @@ class App:
             ("VERSIONES", SCREEN_VERSIONS),
             ("CANCELAR",  SCREEN_CANCEL),
             ("RENTABILIDAD", SCREEN_RENT),
+
         ]   
         bx = 180
         for label, screen_id in nav_items:
