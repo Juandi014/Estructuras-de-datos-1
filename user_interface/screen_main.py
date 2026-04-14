@@ -348,8 +348,10 @@ class MainScreen:
             self.avl_tree.remove(code)
 
     def _avl_delete_subtree(self, code) -> int:
-        """Elimina la subrama de un nodo. Retorna cantidad de nodos eliminados."""
-        if hasattr(self.avl_tree, 'delete_subtree'):
+        if hasattr(self.avl_tree, 'cancelSubtree'):
+            result = self.avl_tree.cancelSubtree(code)
+            return 1 if result else 0
+        elif hasattr(self.avl_tree, 'delete_subtree'):
             return self.avl_tree.delete_subtree(code) or 0
         elif hasattr(self.avl_tree, 'deleteSubtree'):
             return self.avl_tree.deleteSubtree(code) or 0
