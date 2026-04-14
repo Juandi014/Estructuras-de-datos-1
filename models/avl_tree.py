@@ -35,49 +35,21 @@ class AVLTree:
   # cuando no hay raíz, se crea el nodo y se asigna como raiz
   # cuando si hay raiz se procede a insertar llamando a la función privada con la raiz del árbol y el nodo a insertar
   def insert(self, node):
-    # verificar si no hay raiz para asignar el nuevo como raiz
+    """Inserts a new flight and keeps the tree balanced."""
     if self.root is None:
-      self.root = node
+        self.root = node
+        node.setParent(None)
     else:
-      self.__insert(self.root, node)
-    # update depths and prices after every insertion
+        result = self._bst_insert(self.root, node)
+        if result is None:
+            raise ValueError(f"El código '{node.code}' ya existe en el árbol.")
+
+    self._update_heights_and_balances(self.root)
+    if not self.stress_mode:
+        self._rebalance_tree(self.root)
+        self._update_heights_and_balances(self.root)
     self.__updateDepths(self.root, 0)
     self.applyDepthPenalty(self.critical_depth)
-
-  # Método recursivo para insertar un nodo cuando se tiene raiz en el árbol
-  def __insert(self, currentRoot, node):
-    if node.getValue() == currentRoot.getValue():
-      print(f"El valor del nodo {node.getValue()} ya existe en el árbol.")
-    else:
-      # se verifica si el valor a insertar es mayor que el actual raiz
-      if node.getValue() > currentRoot.getValue():
-        # se verifica si existe un hijo derecho
-        if currentRoot.getRightChild() is None:
-          # si no tiene hijo derecho, se asigna el nodo como hijo derecho
-          currentRoot.setRightChild(node)
-          # y el nuevo nodo tendrá como padre a la actual raiz
-          node.setParent(currentRoot)
-          # verificar desbalanceo
-          if not self.stress_mode:
-            self.checkBalance(currentRoot)
-        else:
-          # ya tiene hijo derecho, entonces se debe procesar la inserción desde el hijo derecho
-          # haciendo el llamado recursivo con ese hijo
-          self.__insert(currentRoot.getRightChild(), node)
-      else:
-        # el valor del nodo a insertar es menor que el valor de la actual raiz
-        # se verifica si tiene hijo izquierdo
-        if currentRoot.getLeftChild() is None:
-          # si no tiene se asigna el nodo como hijo izquierdo
-          currentRoot.setLeftChild(node)
-          # y al nuevo nodo se le asigna como padre a la actual raiz
-          node.setParent(currentRoot)
-          # verificar desbalanceo
-          if not self.stress_mode:
-            self.checkBalance(currentRoot)
-        else:
-          # si tiene hijo izquierdo, entonces se llama recursivamente por el hijo izquierdo con el nodo a insertar.
-          self.__insert(currentRoot.getLeftChild(), node)
 
   # Método que permita realizar la búsqueda de un nodo mediante su valor
   # debe seguir la lógica de las reglas de un BST
@@ -209,13 +181,14 @@ class AVLTree:
 
   # Método que permite eliminar un nodo hoja del árbol
   def __deleteLeafNode(self, node):
-    if node.getValue() < node.getParent().getValue():
-      node.getParent().setLeftChild(None)
+    parentNode = node.getParent()   # guardar ANTES de desconectar
+    if node.getValue() < parentNode.getValue():
+        parentNode.setLeftChild(None)
     else:
-      node.getParent().setRightChild(None)
+        parentNode.setRightChild(None)
     node.setParent(None)
     if not self.stress_mode:
-      self.checkBalance(node.getParent() if node.getParent() else self.root)
+        self.checkBalance(parentNode)   # usar la referencia guardada
 
   # Método que permite eliminar un nodo con un solo hijo.
   # El hijo sube a ocupar el lugar del nodo eliminado.
@@ -265,6 +238,7 @@ class AVLTree:
   # Copies flight data fields from source node to target node.
   # Structural fields (pointers, height, depth) are NOT copied.
   def __copyFlightData(self, source, target):
+    target.code = source.code
     target.origin = source.origin
     target.destination = source.destination
     target.departure_time = source.departure_time
@@ -309,10 +283,12 @@ class AVLTree:
 
   # Método para chequear el balanceo de un árbol a partir de un nodo
   def checkBalance(self, node):
+    """Triggers rebalancing upward. Suppressed in stress mode."""
+    if self.stress_mode:
+        return
     if node is None:
-      return
-    elif node != self.root:
-      self.__checkBalance(node)
+        return
+    self.__checkBalance(node)   # eliminar la condición que excluye la raíz
 
   # Método recursivo para validar el balanceo de un árbol
   def __checkBalance(self, node):
@@ -413,28 +389,6 @@ class AVLTree:
     rightChildHeight = self.getHeightNode(node.getRightChild())
     return leftChildHeight - rightChildHeight
 
-  # -----------------------------------------------------------
-  # FIN DE MÉTODOS DEL BALANCEO DEL ÁRBOL AVL
-
-  # Método para dibujar el árbol en forma de árbol
-  def print_tree(self):
-    if self.root is None:
-      print("El árbol está vacío.")
-    else:
-      self.__print_tree(self.root, "", True)
-
-  # Methodo para imprimir el árbol BST
-  def __print_tree(self, node=None, prefix="", is_left=True):
-      if node is not None:
-          if node.getRightChild():
-              new_prefix = prefix + ("│   " if is_left else "    ")
-              self.__print_tree(node.getRightChild(), new_prefix, False)
-          connector = "└── " if is_left else "┌── "
-          print(prefix + connector + str(node.getValue()))
-          if node.getLeftChild():
-              new_prefix = prefix + ("    " if is_left else "│   ")
-              self.__print_tree(node.getLeftChild(), new_prefix, True)
-
   # ==================================================================
   # MÉTODOS EXTENDIDOS — requisitos del proyecto
   # ==================================================================
@@ -492,6 +446,22 @@ class AVLTree:
     node.final_price = node.base_price
     self.applyDepthPenalty(self.critical_depth)
     return True
+  
+  def _bst_insert(self, current, node):
+    if node.getValue() == current.getValue():
+        return None  # duplicado
+    if node.getValue() > current.getValue():
+        if current.getRightChild() is None:
+            current.setRightChild(node)
+            node.setParent(current)
+            return current
+        return self._bst_insert(current.getRightChild(), node)
+    else:
+        if current.getLeftChild() is None:
+            current.setLeftChild(node)
+            node.setParent(current)
+            return current
+        return self._bst_insert(current.getLeftChild(), node)
 
   # Stamps each node with its actual depth and evaluates the is_critical flag.
   # Uses pre-order traversal so parents are always stamped before their children.
@@ -544,7 +514,15 @@ class AVLTree:
   # and applying rotations in cascade (req. 5).
   # Post-order ensures children are balanced before their parent is checked.
   def globalRebalance(self):
+    """
+    Explicit full rebalance triggered by the user.
+    Temporarily disables stress mode internally to apply rotations,
+    then restores it. This is intentional — it's the 'Rebalanceo Global' button.
+    """
+    was_stress = self.stress_mode
+    self.stress_mode = False          # permite rotaciones solo aquí
     self.__globalRebalanceRecursive(self.root)
+    self.stress_mode = was_stress     # restaura el estado previo
     self.__updateDepths(self.root, 0)
     self.applyDepthPenalty(self.critical_depth)
 
@@ -593,19 +571,30 @@ class AVLTree:
 
   # Checks balance factor and height on each node, accumulating violations.
   def __auditRecursive(self, node, violations):
-    if node is None:
-      return
-    bf = self.getBalanceFactor(node)
-    if abs(bf) > 1:
-      violations.append({
-        "code": node.getValue(),
-        "origin": node.origin,
-        "destination": node.destination,
-        "balance_factor": bf,
-        "depth": node.depth,
-      })
-    self.__auditRecursive(node.getLeftChild(), violations)
-    self.__auditRecursive(node.getRightChild(), violations)
+        if node is None:
+            return
+        bf = self.getBalanceFactor(node)
+        left_h  = self.getHeightNode(node.getLeftChild())
+        right_h = self.getHeightNode(node.getRightChild())
+        expected_h = 1 + max(left_h, right_h)
+
+        bf_ok = abs(bf) <= 1
+        h_ok  = node.height == expected_h
+
+        if not bf_ok or not h_ok:
+            violations.append({
+                "code":            node.getValue(),
+                "origin":          node.origin,
+                "destination":     node.destination,
+                "balance_factor":  bf,
+                "depth":           node.depth,
+                "height":          node.height,
+                "expected_height": expected_h,
+                "bf_ok":           bf_ok,
+                "h_ok":            h_ok,
+            })
+        self.__auditRecursive(node.getLeftChild(),  violations)
+        self.__auditRecursive(node.getRightChild(), violations)
 
   # Formats the audit result as a readable string.
   def __buildAuditSummary(self, violations):
@@ -649,30 +638,24 @@ class AVLTree:
   # ==================================================================
   # Economic elimination (Requirement 8) - S7
   # ==================================================================
-
   def find_lowest_rentability_node(self):
-      """
-      Finds the node with the lowest rentability.
-      Rules:
-      1. Lowest rentability = pasajeros * precioFinal - promoción + penalización
-      2. Tie-breaker 1: deepest node (farthest from root)
-      3. Tie-breaker 2: largest code
-      """
-      if not self.root:
-          return None
+        if not self.root:
+            return None
+        nodes = self.breadthFirstSearch()
+        if not nodes:
+            return None
 
-      nodes = self.breadthFirstSearch()
-      if not nodes:
-          return None
+        # Step 1: minimum rentability
+        min_rent = min(self._calculate_rentability(n) for n in nodes)
+        candidates = [n for n in nodes if self._calculate_rentability(n) == min_rent]
 
-      # Calculate rentability for all nodes
-      scored = [(self._calculate_rentability(n), n.depth, n.getValue() if hasattr(n, 'getValue') else n.code, n)
-                for n in nodes]
+        # Step 2: deepest node among ties
+        max_depth = max(n.depth for n in candidates)
+        candidates = [n for n in candidates if n.depth == max_depth]
 
-      # Sort: smallest rentability → highest depth → highest code
-      scored.sort(key=lambda x: (x[0], -x[1], -x[2]))
-
-      return scored[0][3]   # return the node
+        # Step 3: largest code among remaining ties
+        candidates.sort(key=lambda n: n.getValue(), reverse=True)
+        return candidates[0]
 
 
   def _calculate_rentability(self, node):
@@ -736,10 +719,28 @@ class AVLTree:
 
   # Builds the AVL tree by inserting flights one by one (ModoInsercion format).
   def fromInsertionList(self, flights):
-    self.root = None
-    for flightData in flights:
-      node = FlightNode.fromDict(flightData)
-      self.insert(node)
+        """
+        Carga el AVL desde lista de vuelos construyendo un BST
+        perfectamente balanceado desde la lista ordenada (req. 1.1).
+        """
+        self.root = None
+        nodes = [FlightNode.fromDict(f) for f in flights]
+        nodes.sort(key=lambda n: n.getValue())
+        self.root = self._sorted_list_to_bst(nodes, 0, len(nodes) - 1, None)
+        self._update_heights_and_balances(self.root)
+        self.__updateDepths(self.root, 0)
+        self.applyDepthPenalty(self.critical_depth)
+
+  def _sorted_list_to_bst(self, nodes, lo, hi, parent):
+        """Construye un BST perfectamente balanceado desde un subarray ordenado."""
+        if lo > hi:
+            return None
+        mid = (lo + hi) // 2
+        node = nodes[mid]
+        node.setParent(parent)
+        node.setLeftChild(self._sorted_list_to_bst(nodes, lo, mid - 1, node))
+        node.setRightChild(self._sorted_list_to_bst(nodes, mid + 1, hi, node))
+        return node
 
   # ------------------------------------------------------------------
   # Sistema de Versionado Persistente (S4)
@@ -815,19 +816,53 @@ class AVLTree:
       new_node.rightChild = self._deep_copy_tree(node.getRightChild())
 
       return new_node
-
+  
   def _update_heights_and_balances(self, node):
-      """Recalcula alturas y factores de equilibrio después de restaurar."""
-      if node is None:
-          return 0
+        """
+        Recursively updates height and balance_factor for every node.
+        This must be called after any structural change (insert, delete, load, rebalance).
+        """
+        if node is None:
+            return -1
 
-      left_h = self._update_heights_and_balances(node.getLeftChild())
-      right_h = self._update_heights_and_balances(node.getRightChild())
+        left_h = self._update_heights_and_balances(node.getLeftChild())
+        right_h = self._update_heights_and_balances(node.getRightChild())
 
-      node.height = 1 + max(left_h, right_h)
-      node.balance_factor = right_h - left_h
+        node.height = 1 + max(left_h, right_h)
+        node.balance_factor = left_h - right_h   # ← Importante: left - right
 
-      return node.height
+        return node.height
+
+  def _rebalance_tree(self, node):
+    """
+    Recorre el árbol en post-order y aplica rotaciones donde |BF| > 1.
+    Suppressed entirely when stress_mode is True.
+    """
+    if self.stress_mode:
+        return
+    if node is None:
+        return
+    left  = node.getLeftChild()
+    right = node.getRightChild()
+    self._rebalance_tree(left)
+    self._rebalance_tree(right)
+
+    self._update_heights_and_balances(self.root)
+    bf = self.getBalanceFactor(node)
+    if abs(bf) > 1:
+        bfCase = self.getBalanceCase(node, bf)
+        match bfCase:
+            case "LL": self.__rotateRight(node); self.rotations_ll += 1
+            case "RR": self.__rotateLeft(node);  self.rotations_rr += 1
+            case "LR":
+                self.__rotateLeft(node.getLeftChild())
+                self.__rotateRight(node)
+                self.rotations_lr += 1
+            case "RL":
+                self.__rotateRight(node.getRightChild())
+                self.__rotateLeft(node)
+                self.rotations_rl += 1
+        self._update_heights_and_balances(self.root)
 
   # ==================================================================
   # Deep copy helper (used by versioning system)

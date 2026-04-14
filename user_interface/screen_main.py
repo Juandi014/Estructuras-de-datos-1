@@ -1,518 +1,977 @@
-"""
-screen_main.py
---------------
-S1 — Main AVL tree view for SkyBalance.
-
-Layout:
-  ┌─────────────────────────┬──────────────┐
-  │                         │              │
-  │      AVL TREE VIEW      │  SIDE PANEL  │
-  │   (zoom + scroll)       │  (controls)  │
-  │                         │              │
-  └─────────────────────────┴──────────────┘
-
-Side panel operations:
-  - Insert flight
-  - Delete flight by code
-  - Search flight by code → highlights node + shows modal
-
-A search result modal overlays the tree with full flight details.
-"""
 
 import pygame
+import math
+import copy
 from user_interface.color_scheme import (
-    BG_DEEP, BG_SURFACE, BG_SURFACE2,
-    BORDER, BORDER_ACTIVE,
-    AMBER, AMBER_DIM, GREEN_TERM, CRITICAL,
-    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DIM,
-    WINDOW_W, WINDOW_H, NAV_H,
-    PANEL_PADDING, BTN_H,
+    BG_DEEP, BG_SURFACE, BG_SURFACE2, BORDER, PRIMARY, LIGHT,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DIM, CRITICAL,
+    WINDOW_W, WINDOW_H, NAV_H, BTN_H, CARD_RADIUS
 )
 from user_interface.tree_renderer import TreeRenderer
+from user_interface.panel_ui import UIButton, UIToggle
+from user_interface.version_drawer import VersionDrawer
 from models.flight_node import FlightNode
+from user_interface.flight_detail_modal import FlightDetailModal
+
+# Importar HistoryStack y VersionManager con tolerancia a rutas distintas
+try:
+    from logic.history_stack import HistoryStack
+except ImportError:
+    from history_stack import HistoryStack
+
+try:
+    from logic.version_manager import VersionManager
+except ImportError:
+    from version_manager import VersionManager
 
 
-# ------------------------------------------------------------------
-# Layout constants
-# ------------------------------------------------------------------
-
-PANEL_W      = 280
-TREE_RECT    = pygame.Rect(0, NAV_H, WINDOW_W - PANEL_W, WINDOW_H - NAV_H)
-PANEL_RECT   = pygame.Rect(WINDOW_W - PANEL_W, NAV_H, PANEL_W, WINDOW_H - NAV_H)
+class _ReverseStr:
+    """Wrapper para comparar strings en orden descendente sin funciones lambda complejas."""
+    __slots__ = ('s',)
+    def __init__(self, s): self.s = s
+    def __lt__(self, other): return self.s > other.s
+    def __le__(self, other): return self.s >= other.s
+    def __gt__(self, other): return self.s < other.s
+    def __ge__(self, other): return self.s <= other.s
+    def __eq__(self, other): return self.s == other.s
 
 
 class MainScreen:
-    """
-    Handles rendering and input for the S1 main tree view.
-
-    Args:
-        fonts    : Font registry from color_scheme.load_fonts().
-        avl_tree : Shared AVLTree instance.
-        on_undo  : Callable triggered by Ctrl+Z. Signature: on_undo()
-    """
-
-    def __init__(self, fonts: dict, avl_tree, on_undo):
-        self.fonts    = fonts
+    def __init__(self, fonts: dict, avl_tree, on_undo, on_stress_screen=None):
+        self.fonts = fonts
         self.avl_tree = avl_tree
-        self.on_undo  = on_undo
+        self.on_undo = on_undo          # callback externo (se sigue respetando)
+        self.on_stress_screen = on_stress_screen  # callback para ir a la pantalla de modo estres
 
-        self.renderer = TreeRenderer(TREE_RECT)
+        # Historial interno para deshacer sin depender de main.py
+        self._history = HistoryStack()
+        # Gestor de versiones nombradas
+        self._version_manager = VersionManager()
 
-        # Panel input state
-        self._active_field  = None   # "insert" | "delete" | "search"
-        self._insert_fields = {
-            "codigo":   "", "origen":  "", "destino":  "",
-            "hora":     "", "precio":  "", "pasajeros": "",
-        }
-        self._delete_code   = ""
-        self._search_code   = ""
+        # Con los 4 botones horizontales eliminados, el árbol puede crecer hacia abajo
+        self.tree_rect = pygame.Rect(40, NAV_H + 105, int(WINDOW_W * 0.68), WINDOW_H - NAV_H - 175)
 
-        # Status messages
-        self._status        = ""
-        self._status_ok     = True
+        self.panel_rect = pygame.Rect(
+            self.tree_rect.right + 30,
+            NAV_H + 95,
+            310,
+            WINDOW_H - NAV_H - 355
+        )
 
-        # Search result modal
-        self._modal_node    = None   # FlightNode to display in modal
+        self.renderer = TreeRenderer(self.tree_rect)
 
-        # Button rects — computed during draw
-        self._btn_insert    = None
-        self._btn_delete    = None
-        self._btn_search    = None
-        self._btn_center    = None
-        self._modal_close   = None
-        self._field_rects   = {}
+        self.stress_enabled = False
+        self._status = ""
+        self._status_ok = True
+
+        # Estado de recorrido activo
+        self._traversal_result = []      # lista de nodos en orden
+        self._traversal_type = ""        # "inorder" | "preorder" | "postorder" | "bfs"
+        self._traversal_index = -1       # índice del paso actual (-1 = inactivo)
+        self._traversal_timer = 0.0      # ms acumulados
+        self._traversal_step_ms = 600    # ms entre pasos
+
+        # Panel de versiones guardadas
+        self._versions_panel_visible = False
+        self._versions_close_rect    = None
+        self._version_restore_rects  = []
+
+        # === NUEVO: Version Drawer ===
+        self.version_drawer = VersionDrawer(
+            fonts, avl_tree,
+            version_manager=self._version_manager,
+            on_restore=self._on_version_restored,
+        )
+        self.flight_modal = None   # Modal para click en nodo / agregar vuelo
+        self._init_ui()
+
+    def _init_ui(self):
+        # Toggle Modo Estrés
+        toggle_rect = pygame.Rect(self.panel_rect.x, NAV_H + 25, self.panel_rect.width, 44)
+        self.stress_toggle = UIToggle(
+            rect=toggle_rect,
+            label="Modo Estrés",
+            font=self.fonts["label_md"],
+            initial_state=False,
+            callback=self._on_stress_toggle
+        )
+
+        # Botones verticales del panel derecho
+        btn_x = self.panel_rect.x
+        btn_y = self.panel_rect.bottom + 25
+        btn_w = self.panel_rect.width
+        btn_h = 36
+
+        # Botón Agregar ocupa la posición que tenía Buscar Vuelo
+        self.btn_add = UIButton(
+            rect=pygame.Rect(btn_x, btn_y, btn_w, btn_h),
+            text="➕ Agregar Vuelo",
+            font=self.fonts["label_md"],
+            bg_color=BG_SURFACE2,
+            text_color=PRIMARY,
+            border_color=PRIMARY,
+            callback=self._do_add
+        )
+        btn_y += btn_h + 8
+
+        self.btn_undo = UIButton(
+            rect=pygame.Rect(btn_x, btn_y, btn_w, btn_h),
+            text="↩ Deshacer",
+            font=self.fonts["label_md"],
+            bg_color=BG_SURFACE2,
+            text_color=TEXT_SECONDARY,
+            border_color=BORDER,
+            callback=self._do_undo
+        )
+        btn_y += btn_h + 8
+
+        self.btn_low_rent = UIButton(
+            rect=pygame.Rect(btn_x, btn_y, btn_w, btn_h),
+            text="📉 Eliminar nodo crítico",
+            font=self.fonts["label_md"],
+            bg_color=BG_SURFACE2,
+            text_color=CRITICAL,
+            border_color=CRITICAL,
+            callback=self._delete_lowest_rentability
+        )
+        btn_y += btn_h + 8
+
+        self.btn_depth = UIButton(
+            rect=pygame.Rect(btn_x, btn_y, btn_w, btn_h),
+            text="⚙ Modificar profundidad",
+            font=self.fonts["label_md"],
+            bg_color=BG_SURFACE2,
+            text_color=PRIMARY,
+            border_color=PRIMARY,
+            callback=self._modify_critical_depth
+        )
+        btn_y += btn_h + 12
+
+        # === BOTONES EXPORTAR Y GUARDAR EN LA MISMA FILA ===
+        half_w = (btn_w - 12) // 2
+
+        self.btn_export = UIButton(
+            rect=pygame.Rect(btn_x, btn_y, half_w, btn_h),
+            text="💾 Exportar JSON",
+            font=self.fonts["label_md"],
+            bg_color=BG_SURFACE2,
+            text_color=PRIMARY,
+            border_color=PRIMARY,
+            callback=self._export_json
+        )
+
+        self.btn_save_version = UIButton(
+            rect=pygame.Rect(btn_x + half_w + 12, btn_y, half_w, btn_h),
+            text="📌 Guardar Versión",
+            font=self.fonts["label_md"],
+            bg_color=BG_SURFACE2,
+            text_color=PRIMARY,
+            border_color=PRIMARY,
+            callback=self._open_version_drawer
+        )
+
+        # Barra de recorridos — ubicada bajo el árbol, cerca del borde inferior
+        trav_y = self.tree_rect.bottom + 18
+        trav_w = int((self.tree_rect.width - 60) / 4)
+
+        self.trav_in = UIButton(
+            rect=pygame.Rect(self.tree_rect.x, trav_y, trav_w, 34),
+            text="In-Order",
+            font=self.fonts["label_sm"],
+            bg_color=BG_SURFACE2,
+            text_color=TEXT_SECONDARY,
+            border_color=BORDER,
+            callback=lambda: self._show_traversal("inorder")
+        )
+        self.trav_pre = UIButton(
+            rect=pygame.Rect(self.tree_rect.x + trav_w + 20, trav_y, trav_w, 34),
+            text="Pre-Order",
+            font=self.fonts["label_sm"],
+            bg_color=BG_SURFACE2,
+            text_color=TEXT_SECONDARY,
+            border_color=BORDER,
+            callback=lambda: self._show_traversal("preorder")
+        )
+        self.trav_post = UIButton(
+            rect=pygame.Rect(self.tree_rect.x + (trav_w + 20)*2, trav_y, trav_w, 34),
+            text="Post-Order",
+            font=self.fonts["label_sm"],
+            bg_color=BG_SURFACE2,
+            text_color=TEXT_SECONDARY,
+            border_color=BORDER,
+            callback=lambda: self._show_traversal("postorder")
+        )
+        self.trav_bfs = UIButton(
+            rect=pygame.Rect(self.tree_rect.x + (trav_w + 20)*3, trav_y, trav_w, 34),
+            text="Anchura (BFS)",
+            font=self.fonts["label_sm"],
+            bg_color=BG_SURFACE2,
+            text_color=TEXT_SECONDARY,
+            border_color=BORDER,
+            callback=lambda: self._show_traversal("bfs")
+        )
 
     # ------------------------------------------------------------------
-    # Public interface
+    # NUEVA LÓGICA PARA GUARDAR VERSIÓN
+    # ------------------------------------------------------------------
+
+    def _open_version_drawer(self):
+        """
+        Abre/cierra el drawer lateral de versiones guardadas.
+        No muestra ninguna ventana emergente; el guardado se hace
+        desde el input del propio drawer.
+        """
+        self.version_drawer.toggle()
+
+    # ------------------------------------------------------------------
+    # Callbacks existentes (sin cambios)
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Callbacks funcionales
+    # ------------------------------------------------------------------
+
+    def _export_json(self):
+        """Exporta el árbol a JSON usando json_exporter.py."""
+        try:
+            from in_out.json_exporter import export_file
+            path = export_file(self.avl_tree)
+            self.set_status(f"✓ Árbol exportado en: {path}", True)
+        except ValueError as e:
+            self.set_status(f"✗ {e}", False)
+        except Exception as e:
+            self.set_status(f"✗ Error al exportar: {e}", False)
+
+    def _on_stress_toggle(self, state):
+        self.stress_enabled = state
+        if state:
+            self.avl_tree.enableStressMode()
+            self.set_status("Modo Estrés activado", True)
+            # Navegar a la pantalla de modo estrés si hay callback
+            if self.on_stress_screen:
+                self.on_stress_screen()
+        else:
+            self.avl_tree.disableStressMode()
+            self.set_status("Modo Normal activado", True)
+            # Si el toggle se apaga desde aquí (sin volver desde StressScreen),
+            # asegurarse de que el árbol queda en modo normal.
+            self.avl_tree.stress_mode = False
+
+    def _do_add(self):
+        self._open_flight_detail_modal(None)
+
+    def _do_undo(self):
+        """Restaura el árbol al estado anterior usando el historial interno."""
+        entry = self._history.pop()
+        if entry is None:
+            # Intentar también el callback externo
+            try:
+                self.on_undo()
+            except Exception:
+                pass
+            self.set_status("✗ No hay acciones para deshacer", False)
+            return
+        # Restaurar snapshot profundo
+        self.avl_tree.root = copy.deepcopy(entry["snapshot"].root)
+        self.avl_tree.critical_depth = entry["snapshot"].critical_depth
+        self.avl_tree.rotations_ll = entry["snapshot"].rotations_ll
+        self.avl_tree.rotations_rr = entry["snapshot"].rotations_rr
+        self.avl_tree.rotations_lr = entry["snapshot"].rotations_lr
+        self.avl_tree.rotations_rl = entry["snapshot"].rotations_rl
+        self.avl_tree.mass_cancellations = entry["snapshot"].mass_cancellations
+        self.set_status(f"✓ Deshecho: {entry['action']} ({entry['code']})", True)
+
+    def _delete_lowest_rentability(self):
+        """
+        Eliminación Inteligente por Impacto Económico.
+        1. Rentabilidad = pasajeros × precioFinal – promoción (10 % si aplica) + penalización (25 % si aplica)
+        2. Nodo de menor rentabilidad; empate → más lejano a la raíz; persiste → código más grande.
+        3. Cancela ese nodo Y su subrama completa.
+        4. Rebalancea el árbol.
+        """
+        if self.avl_tree.getRoot() is None:
+            self.set_status("✗ El árbol está vacío", False)
+            return
+
+        all_nodes = self.avl_tree.breadthFirstSearch()
+        if not all_nodes:
+            self.set_status("✗ El árbol está vacío", False)
+            return
+
+        def rentability(n):
+            base       = n.passengers * getattr(n, 'final_price', n.base_price)
+            promo      = base * 0.10 if getattr(n, 'promotion', False) else 0.0
+            penalty    = base * 0.25 if getattr(n, 'is_critical', False) else 0.0
+            return base - promo + penalty
+
+        # Clave de ordenamiento:
+        #   1° menor rentabilidad (asc)
+        #   2° mayor profundidad en empate (desc → negamos depth)
+        #   3° mayor código en empate (desc → comparamos con negación de str no es posible,
+        #      usamos truco: reversed string comparison via key)
+        def sort_key(n):
+            # Para código desc: invertimos el orden natural con una clase comparadora
+            return (rentability(n), -n.depth, _ReverseStr(str(n.code)))
+
+        target = min(all_nodes, key=sort_key)
+
+        self._push_history("CANCEL_SUBTREE", target.code)
+        count = self._avl_delete_subtree(target.code)
+        if count == 0:
+            # Si delete_subtree no existe, eliminar solo el nodo
+            self._avl_delete(target.code)
+            count = 1
+
+        # Rebalancear
+        if hasattr(self.avl_tree, 'globalRebalance'):
+            self.avl_tree.globalRebalance()
+
+        self.avl_tree.mass_cancellations = getattr(self.avl_tree, 'mass_cancellations', 0) + 1
+        self.set_status(
+            f"✓ Subrama de {target.code} cancelada "
+            f"(rentabilidad {rentability(target):.0f}, {count} nodo{'s' if count != 1 else ''} eliminado{'s' if count != 1 else ''})",
+            True
+        )
+
+    # ------------------------------------------------------------------
+    # Helpers internos de árbol y historial
+    # ------------------------------------------------------------------
+
+    def _push_history(self, action: str, code):
+        """Guarda un snapshot del árbol actual en el historial de deshacer."""
+        snapshot = copy.deepcopy(self.avl_tree)
+        self._history.push(action, code, snapshot)
+
+    def _avl_delete(self, code):
+        """Elimina un nodo del árbol usando el método disponible."""
+        if hasattr(self.avl_tree, 'delete'):
+            self.avl_tree.delete(code)
+        elif hasattr(self.avl_tree, 'deleteNode'):
+            self.avl_tree.deleteNode(code)
+        elif hasattr(self.avl_tree, 'remove'):
+            self.avl_tree.remove(code)
+
+    def _avl_delete_subtree(self, code) -> int:
+        """Elimina la subrama de un nodo. Retorna cantidad de nodos eliminados."""
+        if hasattr(self.avl_tree, 'delete_subtree'):
+            return self.avl_tree.delete_subtree(code) or 0
+        elif hasattr(self.avl_tree, 'deleteSubtree'):
+            return self.avl_tree.deleteSubtree(code) or 0
+        return 0
+
+    def _modify_critical_depth(self):
+        """Pide una nueva profundidad crítica mediante un cuadro de diálogo Tkinter."""
+        import tkinter as tk
+        from tkinter import simpledialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        current = self.avl_tree.critical_depth
+        value = simpledialog.askinteger(
+            "Modificar profundidad crítica",
+            f"Profundidad crítica actual: {current}\n"
+            "Ingresa la nueva profundidad (0 = sin penalización):",
+            minvalue=0,
+            maxvalue=50,
+            parent=root,
+        )
+        root.destroy()
+        if value is None:
+            self.set_status("Modificación cancelada", True)
+            return
+        self.avl_tree.applyDepthPenalty(value)
+        self.set_status(f"✓ Profundidad crítica actualizada a {value}", True)
+
+    def _show_traversal(self, trav_type: str):
+        """
+        Inicia un recorrido animado del árbol.
+        Si el mismo recorrido ya está activo, lo detiene (toggle).
+        El nodo activo se resalta con un halo amarillo en el árbol.
+        La secuencia completa se muestra en el panel lateral.
+        """
+        # Toggle: si ya está corriendo el mismo recorrido, detenerlo
+        if self._traversal_index >= 0 and self._traversal_type == trav_type:
+            self._traversal_index = -1
+            self._traversal_result = []
+            self._traversal_type = ""
+            self.set_status("Recorrido detenido", True)
+            return
+
+        if self.avl_tree.getRoot() is None:
+            self.set_status("✗ El árbol está vacío", False)
+            return
+
+        if trav_type == "inorder":
+            nodes = self._collect_inorder(self.avl_tree.getRoot())
+        elif trav_type == "preorder":
+            nodes = self._collect_preorder(self.avl_tree.getRoot())
+        elif trav_type == "postorder":
+            nodes = self._collect_postorder(self.avl_tree.getRoot())
+        else:  # bfs
+            nodes = self.avl_tree.breadthFirstSearch()
+
+        self._traversal_result = nodes
+        self._traversal_type = trav_type
+        self._traversal_index = 0
+        self._traversal_timer = 0.0
+
+        label = {"inorder": "In-Order", "preorder": "Pre-Order",
+                 "postorder": "Post-Order", "bfs": "Anchura BFS"}.get(trav_type, trav_type)
+        codes = " → ".join(str(n.code) for n in nodes)
+        self.set_status(f"▶ {label}: {codes}", True)
+
+    # Helpers de recorrido
+    def _collect_inorder(self, node, result=None):
+        if result is None:
+            result = []
+        if node is None:
+            return result
+        self._collect_inorder(node.getLeftChild(), result)
+        result.append(node)
+        self._collect_inorder(node.getRightChild(), result)
+        return result
+
+    def _collect_preorder(self, node, result=None):
+        if result is None:
+            result = []
+        if node is None:
+            return result
+        result.append(node)
+        self._collect_preorder(node.getLeftChild(), result)
+        self._collect_preorder(node.getRightChild(), result)
+        return result
+
+    def _collect_postorder(self, node, result=None):
+        if result is None:
+            result = []
+        if node is None:
+            return result
+        self._collect_postorder(node.getLeftChild(), result)
+        self._collect_postorder(node.getRightChild(), result)
+        result.append(node)
+        return result
+
+    # ------------------------------------------------------------------
+    # EVENTOS - SOLO LO NECESARIO
     # ------------------------------------------------------------------
 
     def handle_event(self, event: pygame.event.Event) -> None:
-        """Dispatches events to modal, panel, or tree renderer."""
-        if self._modal_node is not None:
-            self._handle_modal_event(event)
+        """Dispatches events to the flight detail modal or normal controls."""
+
+        # Prioridad 1: Modal de vuelo (click en nodo o botón agregar)
+        if self.flight_modal and self.flight_modal.visible:
+            self.flight_modal.handle_event(event)
             return
+
+        # Prioridad 2: Version drawer si está abierto
+        self.version_drawer.handle_event(event)
+
+        # Eventos del renderer (zoom, drag)
         self.renderer.handle_event(event)
+
+        # Toggle Modo Estrés — debe recibir eventos ANTES del bloque de botones
+        self.stress_toggle.handle_event(event)
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            self._handle_click(event.pos)
+            # Cerrar panel de versiones
+            if self._versions_panel_visible:
+                close_rect = getattr(self, '_versions_close_rect', None)
+                if close_rect and close_rect.collidepoint(event.pos):
+                    self._versions_panel_visible = False
+                    return
+                for btn_rect, vname in getattr(self, '_version_restore_rects', []):
+                    if btn_rect.collidepoint(event.pos):
+                        self._restore_version(vname)
+                        return
+
+            clicked_node = self.renderer.get_node_at(event.pos, self.avl_tree.getRoot())
+            if clicked_node:
+                self._open_flight_detail_modal(clicked_node)
+                return
+
+            # Botones del panel derecho
+            if self.btn_add.rect.collidepoint(event.pos):
+                self._do_add()
+            elif self.btn_undo.rect.collidepoint(event.pos):
+                self._do_undo()
+            elif self.btn_low_rent.rect.collidepoint(event.pos):
+                self._delete_lowest_rentability()
+            elif self.btn_depth.rect.collidepoint(event.pos):
+                self._modify_critical_depth()
+            elif self.btn_export.rect.collidepoint(event.pos):
+                self._export_json()
+            elif self.btn_save_version.rect.collidepoint(event.pos):
+                self._open_version_drawer()
+            # Botones de recorrido
+            elif self.trav_in.rect.collidepoint(event.pos):
+                self._show_traversal("inorder")
+            elif self.trav_pre.rect.collidepoint(event.pos):
+                self._show_traversal("preorder")
+            elif self.trav_post.rect.collidepoint(event.pos):
+                self._show_traversal("postorder")
+            elif self.trav_bfs.rect.collidepoint(event.pos):
+                self._show_traversal("bfs")
+
         if event.type == pygame.KEYDOWN:
             self._handle_key(event)
 
-    def update(self, dt_ms: float) -> None:
-        """No per-frame animation on this screen (renderer handles its own)."""
-        pass
+    def _handle_key(self, event: pygame.event.Event):
+        """Maneja eventos de teclado globales de la pantalla principal."""
+        # Ctrl+Z → deshacer
+        if event.key == pygame.K_z and (event.mod & pygame.KMOD_CTRL):
+            self._do_undo()
+            return
+        # El drawer ya recibe los KEYDOWN directamente desde handle_event,
+        # no se reenvían aquí para evitar doble escritura en el input.
 
-    def draw(self, surface: pygame.Surface) -> None:
-        """Renders tree view, side panel, and optional modal."""
+
+    def update(self, dt_ms: float):
+        self.version_drawer.update(dt_ms)
+
+        # Animación de recorrido: avanzar al siguiente nodo
+        if self._traversal_index >= 0 and self._traversal_result:
+            self._traversal_timer += dt_ms
+            if self._traversal_timer >= self._traversal_step_ms:
+                self._traversal_timer = 0.0
+                self._traversal_index += 1
+                if self._traversal_index >= len(self._traversal_result):
+                    # Recorrido completado
+                    self._traversal_index = -1
+
+    def _draw_traversal_sequence_overlay(self, surface: pygame.Surface):
+        """
+        Strategy:
+            Dibuja en la parte inferior del área del árbol la secuencia completa
+            del recorrido actual, resaltando el nodo que se está "visitando".
+            Método pequeño, reutilizable y de única responsabilidad.
+        """
+        if not self._traversal_result or self._traversal_index < 0:
+            return
+
+        label_map = {
+            "inorder": "IN-ORDER",
+            "preorder": "PRE-ORDER",
+            "postorder": "POST-ORDER",
+            "bfs": "ANCHURA (BFS)"
+        }
+        label = label_map.get(self._traversal_type, self._traversal_type.upper())
+
+        # Rectángulo del overlay (fondo semi-transparente)
+        overlay_h = 54
+        overlay_rect = pygame.Rect(
+            self.tree_rect.x,
+            self.tree_rect.bottom - overlay_h,
+            self.tree_rect.width,
+            overlay_h
+        )
+
+        # Fondo oscuro con transparencia
+        overlay_surf = pygame.Surface((overlay_rect.w, overlay_rect.h), pygame.SRCALPHA)
+        overlay_surf.fill((20, 20, 35, 200))
+        surface.blit(overlay_surf, overlay_rect.topleft)
+
+        font_lbl = self.fonts["body_sm"]
+        font_code = self.fonts["label_sm"]
+
+        # Título del recorrido
+        title_surf = font_lbl.render(f"▶ {label}", True, (255, 220, 0))
+        surface.blit(title_surf, (overlay_rect.x + 12, overlay_rect.y + 6))
+
+        # Secuencia de códigos
+        x = overlay_rect.x + 12
+        y = overlay_rect.y + 28
+        max_x = overlay_rect.right - 12
+
+        for i, node in enumerate(self._traversal_result):
+            is_active = (i == self._traversal_index)
+            is_done   = (i < self._traversal_index)
+
+            color = (255, 220, 0) if is_active else \
+                    ((120, 200, 120) if is_done else (180, 180, 200))
+
+            code_surf = font_code.render(str(node.code), True, color)
+
+            # No desbordar el rectángulo
+            if x + code_surf.get_width() + 12 > max_x:
+                break
+
+            surface.blit(code_surf, (x, y))
+            x += code_surf.get_width() + 6
+
+            if i < len(self._traversal_result) - 1:
+                arrow = font_code.render("→", True, (80, 80, 100))
+                surface.blit(arrow, (x, y))
+                x += arrow.get_width() + 4
+
+    def draw(self, surface: pygame.Surface):
+        """
+        Main drawing method for S1 — AVL Tree View.
+        Responsibilities:
+            - Clear background
+            - Draw header, tree area, right panel
+            - Draw all UI buttons and toggles
+            - Draw traversal bar
+            - Draw traversal sequence overlay (if active)
+            - Draw versions panel (if visible)
+            - Draw version drawer and flight modal on top
+        """
         surface.fill(BG_DEEP)
-        self.renderer.draw(surface, self.avl_tree.getRoot())
-        self._draw_panel(surface)
-        if self._modal_node is not None:
-            self._draw_modal(surface)
 
-    def set_status(self, message: str, success: bool = True) -> None:
-        """Allows external callers to push a status message."""
-        self._status    = message
-        self._status_ok = success
+        self._draw_header(surface)
+        self._draw_tree_area(surface)
+        self._draw_right_panel(surface)
 
-    # ------------------------------------------------------------------
-    # Panel drawing
-    # ------------------------------------------------------------------
+        # UI controls
+        self.stress_toggle.draw(surface)
+        self.btn_add.draw(surface)
+        self.btn_undo.draw(surface)
+        self.btn_low_rent.draw(surface)
+        self.btn_depth.draw(surface)
+        self.btn_export.draw(surface)
+        self.btn_save_version.draw(surface)
 
-    def _draw_panel(self, surface: pygame.Surface) -> None:
-        """Renders the full right-side control panel."""
-        pygame.draw.rect(surface, BG_SURFACE, PANEL_RECT)
-        pygame.draw.line(surface, BORDER,
-                         (PANEL_RECT.x, PANEL_RECT.y),
-                         (PANEL_RECT.x, PANEL_RECT.bottom), 1)
-
-        y = PANEL_RECT.y + PANEL_PADDING
-        y = self._draw_metrics(surface, y)
-        y = self._draw_section_divider(surface, y, "// INSERTAR VUELO")
-        y = self._draw_insert_section(surface, y)
-        y = self._draw_section_divider(surface, y, "// ELIMINAR")
-        y = self._draw_delete_section(surface, y)
-        y = self._draw_section_divider(surface, y, "// BUSCAR")
-        y = self._draw_search_section(surface, y)
+        self._draw_traversals_bar(surface)
+        
+        # ←←← NUEVO: Status bar (método que faltaba)
         self._draw_status_bar(surface)
 
-    def _draw_metrics(self, surface, y: int) -> int:
-        """Renders live tree metrics at the top of the panel."""
-        label = self.fonts["label_sm"].render("// MÉTRICAS DEL ÁRBOL", True, TEXT_DIM)
-        surface.blit(label, (PANEL_RECT.x + PANEL_PADDING, y))
-        y += 20
+        # Overlay de secuencia de recorrido
+        if self._traversal_index >= 0 and self._traversal_result:
+            self._draw_traversal_sequence_overlay(surface)
 
-        root = self.avl_tree.getRoot()
-        height  = self.avl_tree.getHeight() if root else 0
-        nodes   = self.avl_tree.nodeCount() if root else 0
-        leaves  = self.avl_tree.countLeaves() if root else 0
-        rotations = self.avl_tree.totalRotations() if root else 0
+        # Panel flotante de versiones
+        if self._versions_panel_visible:
+            self._draw_versions_panel(surface)
+
+        # Version drawer y modal (siempre al final)
+        self.version_drawer.draw(surface)
+        self._draw_flight_modal(surface)
+
+    # ------------------------------------------------------------------
+    # MÉTODOS PARA EL MODAL (solo lo necesario)
+    # ------------------------------------------------------------------
+
+    def _open_flight_detail_modal(self, node: FlightNode = None):
+        """
+        Abre el modal para ver, editar o crear un vuelo.
+        - Si node es None → modo creación (campos vacíos, edición inmediata)
+        - Si node existe  → modo detalle/edición con cancelar subrama
+        """
+        is_create = node is None
+
+        def on_save(updated_node: FlightNode):
+            # Guardar snapshot ANTES de la operación
+            self._push_history("INSERT" if is_create else "UPDATE",
+                               updated_node.code)
+            if is_create:
+                self.avl_tree.insert(updated_node)
+                self.set_status(f"✓ Vuelo {updated_node.code} agregado correctamente", True)
+            else:
+                self._avl_delete(node.code)
+                self.avl_tree.insert(updated_node)
+                self.set_status(f"✓ Vuelo {updated_node.code} actualizado", True)
+            self.flight_modal = None
+
+        def on_delete(deleted_node: FlightNode):
+            if node is not None:
+                self._push_history("DELETE", deleted_node.code)
+                self._avl_delete(deleted_node.code)
+                self.set_status(f"✓ Vuelo {deleted_node.code} eliminado", True)
+            self.flight_modal = None
+
+        def on_cancel_subtree(target_node: FlightNode):
+            self._push_history("CANCEL_SUBTREE", target_node.code)
+            count = self._avl_delete_subtree(target_node.code)
+            if count > 0:
+                self.set_status(
+                    f"✓ Subrama de {target_node.code} cancelada "
+                    f"({count} vuelo{'s' if count != 1 else ''} eliminado{'s' if count != 1 else ''})",
+                    True
+                )
+            else:
+                self.set_status(f"✗ No se encontró la subrama de {target_node.code}", False)
+            self.flight_modal = None
+
+        target_node = node if node is not None else FlightNode(
+            code="", origin="", destination="",
+            departure_time="00:00", base_price=0, passengers=0
+        )
+
+        self.flight_modal = FlightDetailModal(
+            fonts=self.fonts,
+            node=target_node,
+            on_close=lambda: setattr(self, 'flight_modal', None),
+            on_save=on_save,
+            on_delete=on_delete if node is not None else None,
+            on_cancel_subtree=on_cancel_subtree if node is not None else None,
+            avl_tree=self.avl_tree,
+        )
+        self.flight_modal.show()
+
+        # En modo creación: limpiar los campos que show() cargó del nodo vacío
+        # y entrar directamente en modo edición para que se pueda escribir
+        if is_create:
+            for field in self.flight_modal._all_fields:
+                field.value = ""
+            self.flight_modal._enter_edit_mode()
+
+    def _draw_flight_modal(self, surface: pygame.Surface):
+        """Dibuja el modal si está visible."""
+        if self.flight_modal and self.flight_modal.visible:
+            self.flight_modal.draw(surface)
+
+    # ------------------------------------------------------------------
+    # Métodos de dibujo existentes (sin cambios)
+    # ------------------------------------------------------------------
+
+    def _draw_header(self, surface):
+        title = self.fonts["title_lg"].render("AVL PRINCIPAL", True, LIGHT)
+        surface.blit(title, (self.tree_rect.centerx - title.get_width() // 2, NAV_H + 20))
+
+        subtitle = self.fonts["body_md"].render(
+            "Gestión de vuelos con balanceo automático en tiempo real",
+            True, TEXT_SECONDARY
+        )
+        surface.blit(subtitle, (self.tree_rect.centerx - subtitle.get_width() // 2, NAV_H + 58))
+
+    def _draw_tree_area(self, surface):
+        pygame.draw.rect(surface, BG_SURFACE, self.tree_rect, border_radius=CARD_RADIUS)
+
+        title_box = pygame.Rect(self.tree_rect.x + 30, self.tree_rect.y + 12, 260, 48)
+        pygame.draw.rect(surface, BG_SURFACE2, title_box, border_radius=10)
+        pygame.draw.rect(surface, PRIMARY, title_box, width=3, border_radius=10)
+
+        alpha = 90 + 40 * math.sin(pygame.time.get_ticks() / 500)
+        border_col = (*PRIMARY[:3], int(alpha))
+        pygame.draw.rect(surface, border_col, self.tree_rect.inflate(18, 18), width=4, border_radius=CARD_RADIUS + 4)
+
+        self.renderer.draw(surface, self.avl_tree.getRoot())
+
+        # Resaltar el nodo activo del recorrido con un halo amarillo
+        if self._traversal_index >= 0 and self._traversal_index < len(self._traversal_result):
+            active_node = self._traversal_result[self._traversal_index]
+            self._draw_traversal_highlight(surface, active_node)
+
+    def _draw_traversal_highlight(self, surface, target_node):
+        """
+        Dibuja un halo amarillo sobre el nodo activo del recorrido.
+        Usa get_node_screen_pos() del renderer para obtener la posición exacta,
+        respetando el zoom y scroll actuales.
+        """
+        if target_node is None:
+            return
+        pos = self.renderer.get_node_screen_pos(target_node.code)
+        if pos is None:
+            return
+        r = max(18, int(22 * self.renderer.zoom))
+        pygame.draw.circle(surface, (255, 220, 0), pos, r, 4)
+
+    def _draw_right_panel(self, surface):
+        pygame.draw.rect(surface, BG_SURFACE, self.panel_rect, border_radius=12)
+
+        metrics_title = pygame.Rect(self.panel_rect.x + 20, self.panel_rect.y + 20, self.panel_rect.width - 40, 42)
+        pygame.draw.rect(surface, BG_SURFACE2, metrics_title, border_radius=10)
+        pygame.draw.rect(surface, PRIMARY, metrics_title, width=3, border_radius=10)
+
+        title_surf = self.fonts["label_md"].render("MÉTRICAS", True, PRIMARY)
+        surface.blit(title_surf, (metrics_title.x + 22, metrics_title.y + 11))
+
+        self._draw_metrics_panel(surface)
+
+    def _draw_metrics_panel(self, surface):
+        y = self.panel_rect.y + 85
+        w = self.panel_rect.width - 40
 
         metrics = [
-            ("Altura",     str(height)),
-            ("Nodos",      str(nodes)),
-            ("Hojas",      str(leaves)),
-            ("Rotaciones", str(rotations)),
+            ("Altura", str(self.avl_tree.getHeight())),
+            ("Nodos", str(self.avl_tree.nodeCount())),
+            ("Hojas", str(self.avl_tree.countLeaves())),
+            ("Rotaciones", str(self.avl_tree.totalRotations())),
+            ("Cancelaciones", str(getattr(self.avl_tree, 'mass_cancellations', 0))),
         ]
-        for label_text, value in metrics:
-            lbl = self.fonts["body_sm"].render(label_text, True, TEXT_SECONDARY)
-            val = self.fonts["label_md"].render(value, True, AMBER)
-            surface.blit(lbl, (PANEL_RECT.x + PANEL_PADDING, y))
-            surface.blit(val, (PANEL_RECT.right - PANEL_PADDING - val.get_width(), y))
-            y += 18
-        return y + 6
 
-    def _draw_section_divider(self, surface, y: int, title: str) -> int:
-        """Draws a labeled horizontal section divider."""
-        pygame.draw.line(surface, BORDER,
-                         (PANEL_RECT.x + PANEL_PADDING, y),
-                         (PANEL_RECT.right - PANEL_PADDING, y), 1)
-        y += 6
-        lbl = self.fonts["label_sm"].render(title, True, TEXT_DIM)
-        surface.blit(lbl, (PANEL_RECT.x + PANEL_PADDING, y))
-        return y + 18
+        for label, value in metrics:
+            rect = pygame.Rect(self.panel_rect.x + 20, y, w, 38)
+            pygame.draw.rect(surface, BG_SURFACE2, rect, border_radius=8)
+            lbl = self.fonts["body_sm"].render(label, True, TEXT_SECONDARY)
+            val = self.fonts["label_md"].render(value, True, PRIMARY)
+            surface.blit(lbl, (rect.x + 15, rect.y + 9))
+            surface.blit(val, (rect.right - 20 - val.get_width(), rect.y + 9))
+            y += 48
 
-    def _draw_insert_section(self, surface, y: int) -> int:
-        """Renders the insert flight form."""
-        fields = [
-            ("codigo",    "Código"),
-            ("origen",    "Origen"),
-            ("destino",   "Destino"),
-            ("hora",      "Hora (HH:MM)"),
-            ("precio",    "Precio base"),
-            ("pasajeros", "Pasajeros"),
-        ]
-        for key, placeholder in fields:
-            rect = pygame.Rect(PANEL_RECT.x + PANEL_PADDING, y,
-                               PANEL_W - PANEL_PADDING * 2, 24)
-            self._field_rects[key] = rect
-            active = self._active_field == key
-            self._draw_input(surface, rect, self._insert_fields[key],
-                             placeholder, active)
-            y += 28
+    def _draw_traversals_bar(self, surface):
+        # Etiqueta
+        lbl = self.fonts["body_sm"].render("RECORRIDOS", True, TEXT_DIM)
+        surface.blit(lbl, (self.tree_rect.x, self.tree_rect.bottom + 4))
 
-        # Insert button
-        btn = pygame.Rect(PANEL_RECT.x + PANEL_PADDING, y,
-                          PANEL_W - PANEL_PADDING * 2, BTN_H)
-        self._btn_insert = btn
-        _draw_button(surface, btn, "+ INSERTAR", self.fonts["label_md"],
-                     BG_DEEP, AMBER, AMBER)
-        return y + BTN_H + 8
+        # Resaltar el botón del recorrido activo
+        active_colors = {
+            "inorder":   self.trav_in,
+            "preorder":  self.trav_pre,
+            "postorder": self.trav_post,
+            "bfs":       self.trav_bfs,
+        }
+        for key, btn in active_colors.items():
+            if self._traversal_index >= 0 and self._traversal_type == key:
+                pygame.draw.rect(surface, PRIMARY, btn.rect, border_radius=8)
+            btn.draw(surface)
 
-    def _draw_delete_section(self, surface, y: int) -> int:
-        """Renders the delete by code input and button."""
-        rect = pygame.Rect(PANEL_RECT.x + PANEL_PADDING, y,
-                           PANEL_W - PANEL_PADDING * 2, 24)
-        self._field_rects["delete"] = rect
-        self._draw_input(surface, rect, self._delete_code,
-                         "Código a eliminar", self._active_field == "delete")
-        y += 28
+    def _restore_version(self, name: str):
+        """
+        Restaura el árbol desde una versión guardada.
+        Limpia cualquier recorrido activo para evitar confusiones visuales.
+        """
+        snapshot = self._version_manager.restoreVersion(name)
+        if snapshot is None:
+            self.set_status(f"✗ Versión '{name}' no encontrada", False)
+            return
 
-        btn = pygame.Rect(PANEL_RECT.x + PANEL_PADDING, y,
-                          PANEL_W - PANEL_PADDING * 2, BTN_H)
-        self._btn_delete = btn
-        _draw_button(surface, btn, "✕ ELIMINAR", self.fonts["label_md"],
-                     BG_DEEP, CRITICAL, CRITICAL)
-        return y + BTN_H + 8
+        # Guardar en historial antes de restaurar
+        self._push_history("RESTORE", name)
 
-    def _draw_search_section(self, surface, y: int) -> int:
-        """Renders the search input and button."""
-        rect = pygame.Rect(PANEL_RECT.x + PANEL_PADDING, y,
-                           PANEL_W - PANEL_PADDING * 2, 24)
-        self._field_rects["search"] = rect
-        self._draw_input(surface, rect, self._search_code,
-                         "Código a buscar", self._active_field == "search")
-        y += 28
+        # Restaurar el estado completo del árbol
+        restored = copy.deepcopy(snapshot)
+        self.avl_tree.root                = restored.root
+        self.avl_tree.critical_depth      = getattr(restored, 'critical_depth', 0)
+        self.avl_tree.rotations_ll        = getattr(restored, 'rotations_ll', 0)
+        self.avl_tree.rotations_rr        = getattr(restored, 'rotations_rr', 0)
+        self.avl_tree.rotations_lr        = getattr(restored, 'rotations_lr', 0)
+        self.avl_tree.rotations_rl        = getattr(restored, 'rotations_rl', 0)
+        self.avl_tree.mass_cancellations  = getattr(restored, 'mass_cancellations', 0)
 
-        btn = pygame.Rect(PANEL_RECT.x + PANEL_PADDING, y,
-                          PANEL_W - PANEL_PADDING * 2, BTN_H)
-        self._btn_search = btn
-        _draw_button(surface, btn, "⌕ BUSCAR", self.fonts["label_md"],
-                     BG_DEEP, GREEN_TERM, GREEN_TERM)
+        # Limpiar recorrido activo (importante)
+        self._traversal_result = []
+        self._traversal_type = ""
+        self._traversal_index = -1
 
-        # Center view button
-        y += BTN_H + 6
-        btn_c = pygame.Rect(PANEL_RECT.x + PANEL_PADDING, y,
-                            PANEL_W - PANEL_PADDING * 2, BTN_H)
-        self._btn_center = btn_c
-        _draw_button(surface, btn_c, "⊙ CENTRAR VISTA", self.fonts["label_md"],
-                     BG_SURFACE, TEXT_SECONDARY, BORDER)
-        return y + BTN_H + 8
+        self._versions_panel_visible = False
+        self.set_status(f"✓ Versión '{name}' restaurada correctamente", True)
 
-    def _draw_input(self, surface, rect, value, placeholder, active):
-        """Renders a single text input field."""
-        bg = BG_SURFACE2 if active else BG_DEEP
-        border = BORDER_ACTIVE if active else BORDER
-        pygame.draw.rect(surface, bg, rect)
-        pygame.draw.rect(surface, border, rect, 1)
+    def _draw_versions_panel(self, surface: pygame.Surface):
+        """
+        Panel flotante que lista todas las versiones guardadas.
+        Se dibuja sobre el panel derecho, con botón de restaurar por cada versión.
+        """
+        versions = self._version_manager.getVersions()
 
-        if value:
-            text_surf = self.fonts["body_sm"].render(value, True, TEXT_PRIMARY)
-        else:
-            text_surf = self.fonts["body_sm"].render(placeholder, True, TEXT_DIM)
+        panel_w = self.panel_rect.width
+        row_h   = 44
+        header_h = 40
+        panel_h = header_h + max(1, len(versions)) * row_h + 50
+        px = self.panel_rect.x
+        py = self.panel_rect.y
 
-        cursor = "_" if active else ""
-        if active and value is not None:
-            text_surf = self.fonts["body_sm"].render(value + cursor, True, AMBER)
+        # Fondo
+        panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        panel_surf.fill((30, 34, 54, 240))
+        pygame.draw.rect(panel_surf, PRIMARY, pygame.Rect(0, 0, panel_w, panel_h),
+                         2, border_radius=12)
+        surface.blit(panel_surf, (px, py))
 
-        surface.blit(text_surf, (rect.x + 6, rect.y + rect.height // 2 - text_surf.get_height() // 2))
+        font_title = self.fonts["label_md"]
+        font_body  = self.fonts["body_sm"]
 
-    def _draw_status_bar(self, surface) -> None:
-        """Renders the status message at the bottom of the panel."""
+        # Título
+        title = font_title.render("VERSIONES GUARDADAS", True, PRIMARY)
+        surface.blit(title, (px + 14, py + 10))
+
+        # Botón cerrar (×)
+        close_rect = pygame.Rect(px + panel_w - 30, py + 8, 22, 22)
+        pygame.draw.rect(surface, CRITICAL, close_rect, border_radius=5)
+        x_surf = font_body.render("✕", True, (255, 255, 255))
+        surface.blit(x_surf, (close_rect.x + 4, close_rect.y + 2))
+        # Registrar rect para handle_event
+        self._versions_close_rect = close_rect
+
+        if not versions:
+            msg = font_body.render("No hay versiones guardadas", True, TEXT_DIM)
+            surface.blit(msg, (px + 14, py + header_h + 10))
+            return
+
+        # Filas de versiones
+        self._version_restore_rects = []
+        for i, v in enumerate(versions):
+            row_y = py + header_h + i * row_h
+            # Fondo alternado
+            if i % 2 == 0:
+                row_surf = pygame.Surface((panel_w, row_h), pygame.SRCALPHA)
+                row_surf.fill((255, 255, 255, 15))
+                surface.blit(row_surf, (px, row_y))
+
+            name_surf = font_body.render(v["name"], True, LIGHT)
+            ts_surf   = font_body.render(v["timestamp"], True, TEXT_DIM)
+            surface.blit(name_surf, (px + 12, row_y + 4))
+            surface.blit(ts_surf,   (px + 12, row_y + 22))
+
+            # Botón restaurar
+            btn_rect = pygame.Rect(px + panel_w - 80, row_y + 10, 68, 24)
+            pygame.draw.rect(surface, PRIMARY, btn_rect, border_radius=6)
+            btn_surf = font_body.render("Restaurar", True, (255, 255, 255))
+            surface.blit(btn_surf, (btn_rect.x + 4, btn_rect.y + 4))
+            self._version_restore_rects.append((btn_rect, v["name"]))
+        """Dibuja la barra de estado en la zona inferior derecha del panel."""
         if not self._status:
             return
-        color = GREEN_TERM if self._status_ok else CRITICAL
-        surf  = self.fonts["body_xs"].render(self._status, True, color)
-        surface.blit(surf, (PANEL_RECT.x + PANEL_PADDING,
-                            WINDOW_H - PANEL_PADDING - surf.get_height()))
+        color = PRIMARY if self._status_ok else CRITICAL
+        # Posición: debajo del panel derecho, alineada con él
+        status_surf = self.fonts["body_sm"].render(self._status, True, color)
+        # Recortar si es muy largo
+        max_w = self.panel_rect.width
+        if status_surf.get_width() > max_w:
+            # Truncar y redibujar
+            chars = self._status
+            while len(chars) > 10:
+                chars = chars[:-1]
+                status_surf = self.fonts["body_sm"].render(chars + "…", True, color)
+                if status_surf.get_width() <= max_w:
+                    break
+        sx = self.panel_rect.x
+        sy = self.panel_rect.bottom + 8
+        surface.blit(status_surf, (sx, sy))
 
-    # ------------------------------------------------------------------
-    # Modal drawing
-    # ------------------------------------------------------------------
-
-    def _draw_modal(self, surface: pygame.Surface) -> None:
-        """Renders the flight detail modal over the tree."""
-        node = self._modal_node
-
-        # Dim background
-        overlay = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 160))
-        surface.blit(overlay, (0, 0))
-
-        # Modal card
-        mw, mh = 420, 340
-        mx = WINDOW_W // 2 - mw // 2
-        my = WINDOW_H // 2 - mh // 2
-        modal_rect = pygame.Rect(mx, my, mw, mh)
-        pygame.draw.rect(surface, BG_SURFACE, modal_rect)
-        _draw_clipped_border(surface, modal_rect, AMBER, clip=12, width=1)
-
-        # Header
-        header = self.fonts["label_md"].render(
-            f"// VUELO {node.code}", True, AMBER)
-        surface.blit(header, (mx + 20, my + 16))
-
-        # Close button
-        close_rect = pygame.Rect(mx + mw - 40, my + 10, 28, 28)
-        self._modal_close = close_rect
-        _draw_button(surface, close_rect, "✕", self.fonts["label_md"],
-                     CRITICAL, BG_SURFACE2, CRITICAL)
-
-        # Divider
-        pygame.draw.line(surface, BORDER,
-                         (mx + 16, my + 44), (mx + mw - 16, my + 44), 1)
-
-        # Flight data rows
-        rows = [
-            ("Origen",      node.origin),
-            ("Destino",     node.destination),
-            ("Hora salida", node.departure_time),
-            ("Precio base", f"$ {node.base_price:,.0f}"),
-            ("Precio final",f"$ {node.final_price:,.0f}"),
-            ("Pasajeros",   str(node.passengers)),
-            ("Promoción",   "SÍ" if node.promotion else "NO"),
-            ("Alerta",      "SÍ" if node.alert else "NO"),
-            ("Profundidad", str(node.depth)),
-            ("Factor eq.",  str(node.balance_factor)),
-            ("Crítico",     "SÍ" if node.is_critical else "NO"),
-        ]
-
-        y = my + 54
-        for i, (label, value) in enumerate(rows):
-            row_bg = BG_SURFACE2 if i % 2 == 0 else BG_SURFACE
-            row_rect = pygame.Rect(mx + 16, y, mw - 32, 20)
-            pygame.draw.rect(surface, row_bg, row_rect)
-
-            lbl_surf = self.fonts["body_sm"].render(label, True, TEXT_SECONDARY)
-            val_col  = CRITICAL if label == "Crítico" and node.is_critical else TEXT_PRIMARY
-            val_surf = self.fonts["body_sm"].render(value, True, val_col)
-            surface.blit(lbl_surf, (mx + 22, y + 3))
-            surface.blit(val_surf, (mx + mw - 22 - val_surf.get_width(), y + 3))
-            y += 22
-
-    # ------------------------------------------------------------------
-    # Input handlers
-    # ------------------------------------------------------------------
-
-    def _handle_click(self, pos: tuple) -> None:
-        """Routes click events to the correct control."""
-        # Field activation
-        for key, rect in self._field_rects.items():
-            if rect.collidepoint(pos):
-                self._active_field = key
-                return
-
-        self._active_field = None
-
-        # Buttons
-        if self._btn_insert and self._btn_insert.collidepoint(pos):
-            self._do_insert()
-        elif self._btn_delete and self._btn_delete.collidepoint(pos):
-            self._do_delete()
-        elif self._btn_search and self._btn_search.collidepoint(pos):
-            self._do_search()
-        elif self._btn_center and self._btn_center.collidepoint(pos):
-            self.renderer.center_on_root(self.avl_tree.getRoot())
-
-    def _handle_modal_event(self, event: pygame.event.Event) -> None:
-        """Handles input when the modal is open."""
-        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-            self._close_modal()
-        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self._modal_close and self._modal_close.collidepoint(event.pos):
-                self._close_modal()
-
-    def _handle_key(self, event: pygame.event.Event) -> None:
-        """Routes keyboard input to the active field or global shortcuts."""
-        if event.key == pygame.K_z and pygame.key.get_mods() & pygame.KMOD_CTRL:
-            self.on_undo()
+    def _draw_status_bar(self, surface: pygame.Surface):
+        """
+        Strategy:
+            Dibuja un mensaje de estado en la parte inferior del panel derecho.
+            Método pequeño y de única responsabilidad.
+            Trunca el texto si es demasiado largo.
+        """
+        if not self._status:
             return
 
-        if self._active_field is None:
-            return
+        color = PRIMARY if self._status_ok else CRITICAL
+        status_surf = self.fonts["body_sm"].render(self._status, True, color)
 
-        if event.key == pygame.K_TAB:
-            self._advance_focus()
-            return
-        if event.key == pygame.K_RETURN:
-            self._active_field = None
-            return
+        # Truncar si es muy largo
+        max_w = self.panel_rect.width - 40
+        if status_surf.get_width() > max_w:
+            chars = self._status
+            while status_surf.get_width() > max_w and len(chars) > 10:
+                chars = chars[:-1]
+                status_surf = self.fonts["body_sm"].render(chars + "…", True, color)
 
-        self._type_into_active(event)
+        # Posición: justo debajo del panel derecho
+        sx = self.panel_rect.x + 20
+        sy = self.panel_rect.bottom + 12
+        surface.blit(status_surf, (sx, sy))
 
-    def _type_into_active(self, event: pygame.event.Event) -> None:
-        """Appends or deletes a character in the currently active field."""
-        field = self._active_field
+    def _on_version_restored(self):
+        """Limpia el cache de posiciones del renderer tras restaurar una version.
+        Evita KeyError en get_node_at cuando el nuevo arbol tiene nodos distintos."""
+        self.renderer._positions = {}
+        # Limpiar recorrido activo para evitar indices invalidos
+        self._traversal_result = []
+        self._traversal_type = ""
+        self._traversal_index = -1
 
-        if field in self._insert_fields:
-            if event.key == pygame.K_BACKSPACE:
-                self._insert_fields[field] = self._insert_fields[field][:-1]
-            elif event.unicode and event.unicode.isprintable():
-                self._insert_fields[field] += event.unicode
+    def set_status(self, message: str, success: bool = True):
+        self._status = message
+        self._status_ok = success
 
-        elif field == "delete":
-            if event.key == pygame.K_BACKSPACE:
-                self._delete_code = self._delete_code[:-1]
-            elif event.unicode and event.unicode.isprintable():
-                self._delete_code += event.unicode
-
-        elif field == "search":
-            if event.key == pygame.K_BACKSPACE:
-                self._search_code = self._search_code[:-1]
-            elif event.unicode and event.unicode.isprintable():
-                self._search_code += event.unicode
-
-    def _advance_focus(self) -> None:
-        """Moves focus to the next insert field on Tab press."""
-        order = ["codigo", "origen", "destino", "hora", "precio", "pasajeros"]
-        if self._active_field in order:
-            idx = order.index(self._active_field)
-            self._active_field = order[(idx + 1) % len(order)]
-
-    # ------------------------------------------------------------------
-    # Operations
-    # ------------------------------------------------------------------
-
-    def _do_insert(self) -> None:
-        """Validates and inserts a new flight into the AVL tree."""
-        f = self._insert_fields
-        try:
-            node = FlightNode(
-                code           = _parse_code(f["codigo"]),
-                origin         = _require(f["origen"],    "Origen requerido"),
-                destination    = _require(f["destino"],   "Destino requerido"),
-                departure_time = _require(f["hora"],      "Hora requerida"),
-                base_price     = float(_require(f["precio"],    "Precio requerido")),
-                passengers     = int(_require(f["pasajeros"], "Pasajeros requeridos")),
-            )
-            self.avl_tree.insert(node)
-            self._clear_insert_fields()
-            self.set_status(f"Vuelo {node.code} insertado.", success=True)
-        except (ValueError, KeyError) as e:
-            self.set_status(str(e), success=False)
-
-    def _do_delete(self) -> None:
-        """Deletes a flight by code from the AVL tree."""
-        code = self._delete_code.strip()
-        if not code:
-            self.set_status("Ingresa un código para eliminar.", success=False)
-            return
-        try:
-            self.avl_tree.delete(_parse_code(code))
-            self._delete_code = ""
-            self.renderer.clear_highlight()
-            self.set_status(f"Vuelo {code} eliminado.", success=True)
-        except Exception as e:
-            self.set_status(str(e), success=False)
-
-    def _do_search(self) -> None:
-        """Searches for a flight and shows its detail modal if found."""
-        code = self._search_code.strip()
-        if not code:
-            self.set_status("Ingresa un código para buscar.", success=False)
-            return
-        node = self.avl_tree.search(_parse_code(code))
-        if node is None:
-            self.set_status(f"Vuelo {code} no encontrado.", success=False)
-            self.renderer.clear_highlight()
-        else:
-            self.renderer.set_highlighted(node.code)
-            self._modal_node = node
-            self.set_status(f"Vuelo {code} encontrado.", success=True)
-
-    def _close_modal(self) -> None:
-        """Closes the search result modal."""
-        self._modal_node = None
-
-    def _clear_insert_fields(self) -> None:
-        """Resets all insert form fields to empty."""
-        for key in self._insert_fields:
-            self._insert_fields[key] = ""
-
-
-# ------------------------------------------------------------------
-# Shared drawing utilities
-# ------------------------------------------------------------------
-
-def _draw_clipped_border(surface, rect, color, clip=10, width=1):
-    """Draws a rectangle with diagonally clipped corners."""
-    x, y, w, h = rect.x, rect.y, rect.width, rect.height
-    points = [
-        (x + clip, y), (x + w - clip, y),
-        (x + w, y + clip), (x + w, y + h - clip),
-        (x + w - clip, y + h), (x + clip, y + h),
-        (x, y + h - clip), (x, y + clip),
-    ]
-    pygame.draw.polygon(surface, color, points, width)
-
-
-def _draw_button(surface, rect, text, font, bg, text_color, border_color):
-    """Draws a flat button with clipped corners and centered label."""
-    pygame.draw.rect(surface, bg, rect)
-    _draw_clipped_border(surface, rect, border_color, clip=5, width=1)
-    label = font.render(text, True, text_color)
-    surface.blit(label, label.get_rect(center=rect.center))
-
-
-# ------------------------------------------------------------------
-# Input validation helpers
-# ------------------------------------------------------------------
-
-def _require(value: str, error_msg: str) -> str:
-    """Raises ValueError if value is empty."""
-    if not value.strip():
-        raise ValueError(error_msg)
-    return value.strip()
-
-
-def _parse_code(value: str):
-    """
-    Tries to parse a flight code as int, falls back to str.
-    Raises ValueError if empty.
-    """
-    value = value.strip()
-    if not value:
-        raise ValueError("Código requerido")
-    try:
-        return int(value)
-    except ValueError:
-        return value
+    def reset_stress_toggle(self):
+        """Resetea el toggle de Modo Estrés a OFF (llamar al volver de StressScreen)."""
+        self.stress_enabled = False
+        self.stress_toggle.state = False
+        self.avl_tree.disableStressMode()
+        self.set_status("Modo Normal activado", True)
