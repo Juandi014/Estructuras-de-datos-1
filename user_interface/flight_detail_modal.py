@@ -6,6 +6,7 @@ Primero muestra solo detalles. Botón "Editar" cambia a modo formulario completo
 Diseño idéntico al modal de QueueScreen (paleta Color Hunt).
 """
 
+import copy
 import pygame
 from models.flight_node import FlightNode
 from user_interface.color_scheme import WINDOW_W, NAV_H
@@ -467,18 +468,29 @@ class FlightDetailModal:
         self._status = ""
 
     def _save_changes(self):
+        """
+        Crea una copia del nodo con los valores del formulario y la pasa
+        a on_save. El nodo original (self.node) NUNCA se muta, lo que
+        garantiza que el árbol quede íntegro si el guardado falla.
+        """
         if not self.on_save:
             self.hide()
             return
         try:
-            self.node.code           = self._field_codigo.value.strip() or self.node.code
-            self.node.origin         = self._field_origen.value.strip() or self.node.origin
-            self.node.destination    = self._field_destino.value.strip() or self.node.destination
-            self.node.departure_time = self._field_hora.value.strip() or self.node.departure_time
-            self.node.base_price     = float(self._field_precio.value or self.node.base_price)
-            self.node.passengers     = int(self._field_pax.value or self.node.passengers)
-            self.node.priority       = self._slider_prio.value
-            self.on_save(self.node)
+            # Copia superficial: preserva atributos extra (promotion, alert, etc.)
+            updated = copy.copy(self.node)
+            updated.code           = self._field_codigo.value.strip() or self.node.code
+            updated.origin         = self._field_origen.value.strip() or self.node.origin
+            updated.destination    = self._field_destino.value.strip() or self.node.destination
+            updated.departure_time = self._field_hora.value.strip() or self.node.departure_time
+            updated.base_price     = float(self._field_precio.value or self.node.base_price)
+            updated.passengers     = int(self._field_pax.value or self.node.passengers)
+            updated.priority       = self._slider_prio.value
+            # Limpiar referencias del árbol para que pueda insertarse limpio
+            updated.leftChild  = None
+            updated.rightChild = None
+            updated.parent     = None
+            self.on_save(updated)
             self.hide()
         except Exception as e:
             self.set_status(f"✗ {e}", False)

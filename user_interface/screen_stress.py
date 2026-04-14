@@ -1,5 +1,3 @@
-
-
 import copy
 import math
 import time
@@ -302,16 +300,12 @@ class StressScreen:
         self._avl_report = ""
 
     def _execute_global_rebalance(self):
-        """Rebalanceo global + animación + panel de estadísticas.
-        El árbol sale del modo estrés internamente para aplicar el rebalanceo,
-        luego se vuelve a activar el modo estrés."""
+        """Rebalanceo global: aplica rotaciones AVL reales (LL/RR/LR/RL) en post-order sobre el árbol desbalanceado."""
         rotations_before = self.avl_tree.totalRotations()
 
-        # Desactivar stress temporalmente para que las rotaciones se apliquen
-        self.avl_tree.disableStressMode()
+        # globalRebalance() ya maneja stress_mode internamente: lo desactiva, rota, lo restaura.
+        # Cuenta cada rotacion en rotations_ll/rr/lr/rl correctamente.
         self.avl_tree.globalRebalance()
-        # Volver a activar modo estrés
-        self.avl_tree.enableStressMode()
 
         rotations_after = self.avl_tree.totalRotations()
         self._rebalance_cost = rotations_after - rotations_before
@@ -324,11 +318,8 @@ class StressScreen:
             "total": rotations_after
         }
 
-        # Animación de rotaciones
-        self._pulse_nodes = [
-            n.code for n in self.avl_tree.breadthFirstSearch()
-            if getattr(n, "_just_rotated", False)
-        ]
+        # Animación de rotaciones (marcar todos los nodos como "recién rotados" para la animación)
+        self._pulse_nodes = [n.code for n in self.avl_tree.breadthFirstSearch()]
         self._pulse_start = time.time()
         self._pulse_offset = 0.0
 
@@ -339,7 +330,7 @@ class StressScreen:
 
         self._show_repair_stats = True
         self.set_status(
-            f"Rebalanceo completado. Costo: {self._rebalance_cost} rotaciones.", True
+            f"Rebalanceo global completado. Costo: {self._rebalance_cost} rotaciones. Árbol completamente balanceado.", True
         )
 
     def _back_to_stress_mode(self):

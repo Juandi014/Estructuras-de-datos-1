@@ -244,18 +244,14 @@ class MainScreen:
 
     def _on_stress_toggle(self, state):
         self.stress_enabled = state
+
         if state:
-            self.avl_tree.enableStressMode()
             self.set_status("Modo Estrés activado", True)
-            # Navegar a la pantalla de modo estrés si hay callback
             if self.on_stress_screen:
                 self.on_stress_screen()
         else:
             self.avl_tree.disableStressMode()
             self.set_status("Modo Normal activado", True)
-            # Si el toggle se apaga desde aquí (sin volver desde StressScreen),
-            # asegurarse de que el árbol queda en modo normal.
-            self.avl_tree.stress_mode = False
 
     def _do_add(self):
         self._open_flight_detail_modal(None)
@@ -661,16 +657,27 @@ class MainScreen:
         is_create = node is None
 
         def on_save(updated_node: FlightNode):
-            # Guardar snapshot ANTES de la operación
-            self._push_history("INSERT" if is_create else "UPDATE",
-                               updated_node.code)
+    # Guardia: si no hay código válido, no proceder (evita borrado accidental)
+            if not updated_node.code or not str(updated_node.code).strip():
+                self.flight_modal = None
+                return
+
+            self._push_history("INSERT" if is_create else "UPDATE", updated_node.code)
             if is_create:
-                self.avl_tree.insert(updated_node)
-                self.set_status(f"✓ Vuelo {updated_node.code} agregado correctamente", True)
+                try:
+                    self.avl_tree.insert(updated_node)
+                    self.set_status(f"✓ Vuelo {updated_node.code} agregado correctamente", True)
+                except ValueError as e:
+                    self.set_status(f"✗ {e}", False)
             else:
-                self._avl_delete(node.code)
-                self.avl_tree.insert(updated_node)
-                self.set_status(f"✓ Vuelo {updated_node.code} actualizado", True)
+                try:
+                    self._avl_delete(node.code)
+                    self.avl_tree.insert(updated_node)
+                    self.set_status(f"✓ Vuelo {updated_node.code} actualizado", True)
+                except ValueError as e:
+                    # Si el insert falla, restaurar el nodo original desde el historial
+                    self._do_undo()
+                    self.set_status(f"✗ Error al actualizar: {e}", False)
             self.flight_modal = None
 
         def on_delete(deleted_node: FlightNode):

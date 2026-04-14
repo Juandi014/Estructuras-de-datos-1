@@ -35,7 +35,6 @@ class AVLTree:
   # cuando no hay raíz, se crea el nodo y se asigna como raiz
   # cuando si hay raiz se procede a insertar llamando a la función privada con la raiz del árbol y el nodo a insertar
   def insert(self, node):
-    """Inserts a new flight and keeps the tree balanced."""
     if self.root is None:
         self.root = node
         node.setParent(None)
@@ -43,11 +42,10 @@ class AVLTree:
         result = self._bst_insert(self.root, node)
         if result is None:
             raise ValueError(f"El código '{node.code}' ya existe en el árbol.")
+        if not self.stress_mode:
+            self.checkBalance(result)   # sube desde el punto de inserción ← el cambio
 
     self._update_heights_and_balances(self.root)
-    if not self.stress_mode:
-        self._rebalance_tree(self.root)
-        self._update_heights_and_balances(self.root)
     self.__updateDepths(self.root, 0)
     self.applyDepthPenalty(self.critical_depth)
 
@@ -288,35 +286,45 @@ class AVLTree:
         return
     if node is None:
         return
-    self.__checkBalance(node)   # eliminar la condición que excluye la raíz
+    self.__checkBalance(node)
 
-  # Método recursivo para validar el balanceo de un árbol
+
   def __checkBalance(self, node):
-    bf = self.getBalanceFactor(node)
-    if bf > 1 or bf < -1:
-      bfCase = self.getBalanceCase(node, bf)
-      match bfCase:
-        case "LL":
-          self.__rotateRight(node)
-          self.rotations_ll += 1
-        case "RR":
-          self.__rotateLeft(node)
-          self.rotations_rr += 1
-        case "LR":
-          # First rotate left on left child to convert to LL case,
-          # then rotate right on the unbalanced node.
-          self.__rotateLeft(node.getLeftChild())
-          self.__rotateRight(node)
-          self.rotations_lr += 1
-        case "RL":
-          # First rotate right on right child to convert to RR case,
-          # then rotate left on the unbalanced node.
-          self.__rotateRight(node.getRightChild())
-          self.__rotateLeft(node)
-          self.rotations_rl += 1
-    else:
-      if node != self.root:
-        self.__checkBalance(node.getParent())
+      if node is None:
+          return
+
+      bf = self.getBalanceFactor(node)
+
+      if bf > 1 or bf < -1:
+          bfCase = self.getBalanceCase(node, bf)
+
+          match bfCase:
+              case "LL":
+                  self.__rotateRight(node)
+                  self.rotations_ll += 1
+
+              case "RR":
+                  self.__rotateLeft(node)
+                  self.rotations_rr += 1
+
+              case "LR":
+                  self.__rotateLeft(node.getLeftChild())
+                  self.__rotateRight(node)
+                  self.rotations_lr += 1
+
+              case "RL":
+                  self.__rotateRight(node.getRightChild())
+                  self.__rotateLeft(node)
+                  self.rotations_rl += 1
+
+          # 🔥 CLAVE: seguir subiendo después de rotar
+          if node.getParent() is not None:
+              self.__checkBalance(node.getParent())
+
+      else:
+          # seguir subiendo si está balanceado
+          if node.getParent() is not None:
+              self.__checkBalance(node.getParent())
 
   # método para el giro simple a la derecha
   def __rotateRight(self, topNode):

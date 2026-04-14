@@ -49,7 +49,6 @@ class SplashScreen:
     def __init__(self, fonts: dict, on_load, on_build, on_depth):
         self.fonts      = fonts
         self.on_load    = on_load
-        self.on_build   = on_build
         self.on_depth   = on_depth
 
         # Typewriter state
@@ -74,7 +73,6 @@ class SplashScreen:
         # Layout rects for right card
         self._card_rect     = None
         self._load_btn      = None
-        self._build_btn     = None
         self._depth_rect    = None
         self._minus_btn     = None
         self._plus_btn      = None
@@ -262,9 +260,9 @@ class SplashScreen:
         if not self._sub_done:
             return
 
-        cx    = WINDOW_W * 3 // 4          # Right half
+        cx    = WINDOW_W * 3 // 4
         cy    = WINDOW_H // 2 + 90
-        cw, ch = 380, 248
+        cw, ch = 380, 208          # card más compacta (-40px)
 
         card_rect = pygame.Rect(cx - cw // 2, cy - ch // 2, cw, ch)
         self._card_rect = card_rect
@@ -278,17 +276,12 @@ class SplashScreen:
         btn_rect = pygame.Rect(card_rect.x + 16, card_rect.y + 40, cw - 32, BTN_H)
         self._load_btn = btn_rect
         _draw_button(surface, btn_rect, "CARGAR ARCHIVO JSON", self.fonts["label_md"],
-                     AMBER, BG_DEEP, AMBER)
+                    AMBER, BG_DEEP, AMBER)
 
-        build_rect = pygame.Rect(card_rect.x + 16, card_rect.y + 80, cw - 32, BTN_H)
-        self._build_btn = build_rect
-        _draw_button(surface, build_rect, "CREAR ÁRBOL DESDE CERO", self.fonts["label_md"],
-                     BG_SURFACE2, TEXT_SECONDARY, BORDER)
-
-        sep_y = card_rect.y + 128
+        sep_y = card_rect.y + 88   # separador sube (antes era 128)
         pygame.draw.line(surface, BORDER,
-                         (card_rect.x + 16, sep_y),
-                         (card_rect.right - 16, sep_y), 1)
+                        (card_rect.x + 16, sep_y),
+                        (card_rect.right - 16, sep_y), 1)
 
         dlabel = self.fonts["label_sm"].render("PROFUNDIDAD CRÍTICA", True, TEXT_DIM)
         surface.blit(dlabel, (card_rect.x + 16, sep_y + 10))
@@ -336,9 +329,6 @@ class SplashScreen:
     def _handle_click(self, pos: tuple) -> None:
         if self._load_btn and self._load_btn.collidepoint(pos):
             self.on_load()
-            return
-        if self._build_btn and self._build_btn.collidepoint(pos):
-            self.on_build()
             return
         if self._minus_btn and self._minus_btn.collidepoint(pos):
             self._depth_value = max(0, self._depth_value - 1)

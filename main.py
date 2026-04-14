@@ -200,15 +200,10 @@ class App:
         self.current_screen = SCREEN_MAIN
 
     def _handle_enter_stress(self) -> None:
-        """
-        Triggered when the user activates the Stress Mode toggle in MainScreen.
-        Calls on_enter() so the screen re-enables stress mode on every visit.
-        """
+        self.avl_tree.enableStressMode()        # siempre se activa aquí
         stress = self.screens.get(SCREEN_STRESS)
         if stress and hasattr(stress, 'on_enter'):
             stress.on_enter()
-        else:
-            self.avl_tree.enableStressMode()
         self.current_screen = SCREEN_STRESS
 
     def _switch_to_screen(self, screen_id: str) -> None:

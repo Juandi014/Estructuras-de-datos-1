@@ -46,21 +46,11 @@ class CompareScreen:
 
     def _init_ui_buttons(self):
         btn_y = WINDOW_H - BTN_H - 25
-        btn_w = 260
-
-        self.btn_play = UIButton(
-            rect=pygame.Rect(WINDOW_W//2 - btn_w//2 - 140, btn_y, btn_w, BTN_H),
-            text="▶ REPRODUCIR INSERCIONES PASO A PASO",
-            font=self.fonts["label_md"],
-            bg_color=PRIMARY,
-            text_color=BG_DEEP,
-            border_color=PRIMARY,
-            callback=self._start_playback
-        )
+        btn_w = 320
 
         self.btn_back = UIButton(
-            rect=pygame.Rect(WINDOW_W//2 + 20, btn_y, btn_w, BTN_H),
-            text="← VOLVER A HOME",
+            rect=pygame.Rect(WINDOW_W // 2 - btn_w // 2, btn_y, btn_w, BTN_H),
+            text="← VISTA AVL",
             font=self.fonts["label_md"],
             bg_color=BG_SURFACE2,
             text_color=TEXT_SECONDARY,
@@ -75,8 +65,6 @@ class CompareScreen:
     def handle_event(self, event: pygame.event.Event):
         self.avl_renderer.handle_event(event)
         self.bst_renderer.handle_event(event)
-
-        self.btn_play.handle_event(event)
         self.btn_back.handle_event(event)
 
     # ------------------------------------------------------------------
@@ -204,11 +192,7 @@ class CompareScreen:
         surface.blit(msg, msg.get_rect(center=viewport.center))
 
     def _draw_buttons(self, surface):
-        self.btn_play.draw(surface)
         self.btn_back.draw(surface)
-
-    def _start_playback(self):
-        print("▶ Reproducción paso a paso iniciada (próxima implementación)")
 
     def set_insertion_list(self, flights):
         self.insertion_list = flights
