@@ -1,5 +1,5 @@
 class FlightNode:
-
+    
     def __init__(
         self,
         code,
@@ -23,43 +23,50 @@ class FlightNode:
         self.alert = bool(alert)
         self.priority = int(priority)
 
-        # Final price defaults to base_price; penalties are applied by the tree.
+        # Final price is calculated by the tree (critical depth penalty)
         self.final_price = float(final_price) if final_price is not None else self.base_price
 
-        # --- Structural metadata (set and updated by the tree) ---
+        # Structural metadata updated by the tree
         self.height = 1
         self.balance_factor = 0
         self.depth = 0
         self.is_critical = False
 
-        # --- Child pointers and parent (accessed via getters/setters) ---
+        # Tree pointers
         self.leftChild = None
         self.rightChild = None
         self.parent = None
 
     # ------------------------------------------------------------------
-    # Getters and setters for structural pointers
+    # Structural getters and setters
     # ------------------------------------------------------------------
 
     def getLeftChild(self):
+        """Returns the left child node."""
         return self.leftChild
 
     def setLeftChild(self, node):
+        """Sets the left child node."""
         self.leftChild = node
 
     def getRightChild(self):
+        """Returns the right child node."""
         return self.rightChild
 
     def setRightChild(self, node):
+        """Sets the right child node."""
         self.rightChild = node
 
     def getParent(self):
+        """Returns the parent node."""
         return self.parent
 
     def setParent(self, node):
+        """Sets the parent node."""
         self.parent = node
 
     def getValue(self):
+        """Returns the node's value (used by tree operations)."""
         return self.code
 
     # ------------------------------------------------------------------
@@ -67,6 +74,7 @@ class FlightNode:
     # ------------------------------------------------------------------
 
     def __repr__(self):
+        """Developer-friendly representation."""
         return (
             f"FlightNode(code={self.code}, "
             f"{self.origin}->{self.destination}, "
@@ -75,13 +83,15 @@ class FlightNode:
         )
 
     def __str__(self):
-        return f"[{self.code}] {self.origin} -> {self.destination} @ {self.departure_time}"
+        """User-friendly string representation."""
+        return f"[{self.code}] {self.origin} → {self.destination} @ {self.departure_time}"
 
     # ------------------------------------------------------------------
-    # Serialization
+    # Serialization (used by JSON loader/exporter)
     # ------------------------------------------------------------------
 
     def toDict(self):
+        """Converts the node to a dictionary for JSON export."""
         return {
             "codigo": self.code,
             "origen": self.origin,
@@ -101,8 +111,9 @@ class FlightNode:
 
     @staticmethod
     def fromDict(data):
+        """Creates a FlightNode from a dictionary (used by JSON loader)."""
         node = FlightNode(
-            code=data.get("codigo", data.get("code")),
+            code=str(data.get("codigo", data.get("code"))),
             origin=data.get("origen", data.get("origin", "")),
             destination=data.get("destino", data.get("destination", "")),
             departure_time=data.get("horaSalida", data.get("departure_time", "00:00")),
@@ -113,11 +124,35 @@ class FlightNode:
             priority=data.get("prioridad", data.get("priority", 1)),
             final_price=data.get("precioFinal", data.get("final_price", None)),
         )
-        # Restore structural fields if present (topology mode or saved state).
+        # Restore structural fields (topology mode or saved versions)
         node.height = data.get("altura", data.get("height", 1))
         node.balance_factor = data.get("factorEquilibrio", data.get("balance_factor", 0))
         node.depth = data.get("profundidad", data.get("depth", 0))
         node.is_critical = data.get("nodoCritico", data.get("is_critical", False))
         return node
 
-        
+    # ------------------------------------------------------------------
+    # Helper for future "click on node → show full info" feature
+    # ------------------------------------------------------------------
+
+    def get_full_info(self):
+        """
+        Returns a dictionary with all flight information.
+        Used by future modal when user clicks a node in the tree.
+        """
+        return {
+            "code": self.code,
+            "origin": self.origin,
+            "destination": self.destination,
+            "departure_time": self.departure_time,
+            "base_price": self.base_price,
+            "final_price": self.final_price,
+            "passengers": self.passengers,
+            "promotion": self.promotion,
+            "alert": self.alert,
+            "priority": self.priority,
+            "depth": self.depth,
+            "balance_factor": self.balance_factor,
+            "is_critical": self.is_critical,
+            "height": self.height,
+        }

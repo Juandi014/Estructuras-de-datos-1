@@ -1,131 +1,215 @@
-"""
-screen_compare.py
------------------
-Pantalla de Comparación AVL vs BST (modo INSERCIÓN)
-
-Muestra ambos árboles lado a lado y permite reproducir las inserciones paso a paso.
-"""
-
+import math
 import pygame
 from user_interface.color_scheme import (
-    BG_DEEP, BG_SURFACE, BG_SURFACE2, BORDER, PRIMARY, LIGHT, TEXT_DIM,
-    TEXT_PRIMARY, TEXT_SECONDARY, SECONDARY, DARK_ACCENT,
-    CARD_RADIUS, NAV_H, PANEL_PADDING, BTN_H, WINDOW_W, WINDOW_H
+    BG_DEEP, BG_SURFACE2, BORDER, PRIMARY, LIGHT,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_DIM, SECONDARY, DARK_ACCENT,
+    CARD_RADIUS, NAV_H, BTN_H, WINDOW_W, WINDOW_H
 )
 from user_interface.tree_renderer import TreeRenderer
 from user_interface.panel_ui import UIButton
 
 
 class CompareScreen:
+    """
+    Main comparison screen with balanced 50/50 layout for AVL and BST trees.
+    """
+
     def __init__(self, fonts: dict, avl_tree, bst_tree, on_switch_screen):
         self.fonts = fonts
         self.avl_tree = avl_tree
         self.bst_tree = bst_tree
         self.on_switch_screen = on_switch_screen
 
-        # Renderers para ambos árboles
-        avl_rect = pygame.Rect(40, NAV_H + 80, int(WINDOW_W * 0.38), WINDOW_H - NAV_H - 140)
-        bst_rect = pygame.Rect(int(WINDOW_W * 0.42), NAV_H + 80, int(WINDOW_W * 0.28), WINDOW_H - NAV_H - 140)
+        # ------------------- Layout Calculation -------------------
+        vs_space = int(WINDOW_W * 0.14)          # 14% for VS area
+        tree_width = (WINDOW_W - vs_space) // 2 - 50
 
-        self.avl_renderer = TreeRenderer(avl_rect)
-        self.bst_renderer = TreeRenderer(bst_rect)
+        avl_viewport = pygame.Rect(30, NAV_H + 140, tree_width, WINDOW_H - NAV_H - 300)
+        bst_viewport = pygame.Rect(WINDOW_W - tree_width - 30, NAV_H + 140, tree_width, WINDOW_H - NAV_H - 300)
 
+        self.avl_renderer = TreeRenderer(avl_viewport)
+        self.bst_renderer = TreeRenderer(bst_viewport)
+
+        # Center both trees initially
+        self.avl_renderer.center_on_root(self.avl_tree.getRoot())
+        self.bst_renderer.center_on_root(self.bst_tree.getRoot())
+
+        # VS animation state
+        self.vs_pulse = 0.0
+
+        # Playback
         self.is_playing = False
         self.current_step = 0
-        self.insertion_list = []   # Se llenará cuando se cargue el JSON
+        self.insertion_list = []
 
-        self.hovered_button = None
+        self._init_ui_buttons()
+
+    def _init_ui_buttons(self):
+        btn_y = WINDOW_H - BTN_H - 25
+        btn_w = 260
+
+        self.btn_play = UIButton(
+            rect=pygame.Rect(WINDOW_W//2 - btn_w//2 - 140, btn_y, btn_w, BTN_H),
+            text="▶ REPRODUCIR INSERCIONES PASO A PASO",
+            font=self.fonts["label_md"],
+            bg_color=PRIMARY,
+            text_color=BG_DEEP,
+            border_color=PRIMARY,
+            callback=self._start_playback
+        )
+
+        self.btn_back = UIButton(
+            rect=pygame.Rect(WINDOW_W//2 + 20, btn_y, btn_w, BTN_H),
+            text="← VOLVER A HOME",
+            font=self.fonts["label_md"],
+            bg_color=BG_SURFACE2,
+            text_color=TEXT_SECONDARY,
+            border_color=BORDER,
+            callback=self.on_switch_screen
+        )
+
+    # ------------------------------------------------------------------
+    # Event Handling (unchanged)
+    # ------------------------------------------------------------------
 
     def handle_event(self, event: pygame.event.Event):
-        if event.type == pygame.MOUSEMOTION:
-            self._update_hover(event.pos)
+        self.avl_renderer.handle_event(event)
+        self.bst_renderer.handle_event(event)
 
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            self._handle_click(event.pos)
+        self.btn_play.handle_event(event)
+        self.btn_back.handle_event(event)
 
-    def _update_hover(self, pos):
-        self.hovered_button = None
-        # Se puede expandir más adelante
-
-    def _handle_click(self, pos):
-        # Aquí irá la lógica del botón "Reproducir"
-        print("Botón reproducir clickeado - lógica pendiente")
+    # ------------------------------------------------------------------
+    # Update & Animation
+    # ------------------------------------------------------------------
 
     def update(self, dt_ms: float):
-        pass
+        self.vs_pulse += 0.004 * dt_ms
+
+    # ------------------------------------------------------------------
+    # Drawing
+    # ------------------------------------------------------------------
 
     def draw(self, surface: pygame.Surface):
         surface.fill(BG_DEEP)
 
         self._draw_header(surface)
-        self._draw_trees(surface)
-        self._draw_right_panel(surface)
+        self._draw_vs_separator(surface)
+        self._draw_avl_section(surface)
+        self._draw_bst_section(surface)
+        self._draw_buttons(surface)
 
     def _draw_header(self, surface):
-        title = self.fonts["title_lg"].render("Comparación AVL vs BST", True, LIGHT)
+        title = self.fonts["title_lg"].render("COMPARACIÓN AVL vs BST", True, LIGHT)
         surface.blit(title, (WINDOW_W // 2 - title.get_width() // 2, NAV_H + 20))
 
-        subtitle = self.fonts["body_md"].render("Modo Inserción - Demostración de balanceo", True, TEXT_SECONDARY)
-        surface.blit(subtitle, (WINDOW_W // 2 - subtitle.get_width() // 2, NAV_H + 55))
+        subtitle = self.fonts["body_md"].render(
+            "Modo Inserción — Demostrando la ventaja del balanceo automático",
+            True, TEXT_SECONDARY
+        )
+        surface.blit(subtitle, (WINDOW_W // 2 - subtitle.get_width() // 2, NAV_H + 58))
 
-    def _draw_trees(self, surface):
-        # Títulos sobre cada árbol
-        avl_title = self.fonts["label_md"].render("ÁRBOL AVL (Balanceado)", True, PRIMARY)
-        surface.blit(avl_title, (80, NAV_H + 90))
+    def _draw_vs_separator(self, surface):
+        """Vertical separation line + pulsing circle with VS inside - circle moved to exact middle"""
+        cx = WINDOW_W // 2
+        cy = NAV_H + 255   # moved down to be exactly in the middle of the VS area
 
-        bst_title = self.fonts["label_md"].render("ÁRBOL BST (Sin balanceo)", True, DARK_ACCENT)
-        surface.blit(bst_title, (int(WINDOW_W * 0.45), NAV_H + 90))
+        # Vertical separation line (full height)
+        line_alpha = 70 + 50 * abs(math.sin(self.vs_pulse * 0.005))
+        line_color = (*SECONDARY[:3], int(line_alpha))
+        pygame.draw.line(surface, line_color, (cx, NAV_H + 80), (cx, WINDOW_H - 80), 4)
 
-        # Dibujar árboles
-        self.avl_renderer.draw(surface, self.avl_tree.getRoot())
-        self.bst_renderer.draw(surface, self.bst_tree.getRoot())
+        # Pulsing circle (centered in VS area)
+        radius = 55 + 9 * math.sin(self.vs_pulse * 0.008)
+        pygame.draw.circle(surface, BG_SURFACE2, (cx, cy), int(radius + 10))
+        pygame.draw.circle(surface, SECONDARY, (cx, cy), int(radius), 6)
 
-    def _draw_right_panel(self, surface):
-        panel_rect = pygame.Rect(int(WINDOW_W * 0.68), NAV_H, int(WINDOW_W * 0.32), WINDOW_H - NAV_H)
-        pygame.draw.rect(surface, BG_SURFACE, panel_rect)
+        # VS text inside circle
+        vs_text = self.fonts["title_md"].render("VS", True, LIGHT)
+        surface.blit(vs_text, vs_text.get_rect(center=(cx, cy)))
 
-        y = NAV_H + 30
+    def _draw_avl_section(self, surface):
+        self._draw_tree_with_metrics(
+            surface,
+            self.avl_renderer,
+            self.avl_tree,
+            "ÁRBOL AVL (Balanceado)",
+            PRIMARY,
+            30
+        )
 
-        title = self.fonts["label_md"].render("Análisis Comparativo", True, PRIMARY)
-        surface.blit(title, (panel_rect.x + 30, y))
-        y += 50
+    def _draw_bst_section(self, surface):
+        self._draw_tree_with_metrics(
+            surface,
+            self.bst_renderer,
+            self.bst_tree,
+            "ÁRBOL BST (Sin balanceo)",
+            DARK_ACCENT,
+            WINDOW_W // 2 + 10
+        )
 
-        # Tarjetas verticales de métricas
-        metrics = [
-            ("Altura", "AVL: 7", "BST: 14"),
-            ("Rotaciones", "AVL: 12", "BST: 0"),
-            ("Profundidad Máx.", "AVL: 7", "BST: 14"),
-            ("Nodos Críticos", "AVL: 2", "BST: 9"),
+    def _draw_tree_with_metrics(self, surface, renderer, tree, title, accent_color, x_offset):
+        # Tree name in a nice box at the top
+        box_rect = pygame.Rect(x_offset + 20, NAV_H + 85, 320, 38)
+        pygame.draw.rect(surface, BG_SURFACE2, box_rect, border_radius=8)
+        pygame.draw.rect(surface, accent_color, box_rect, width=2, border_radius=8)
+
+        title_surf = self.fonts["label_md"].render(title, True, accent_color)
+        surface.blit(title_surf, (box_rect.x + 20, box_rect.y + 10))
+
+        # Tree rendering
+        if tree.getRoot():
+            renderer.draw(surface, tree.getRoot())
+        else:
+            self._draw_empty_tree(surface, renderer.viewport, f"{title.split()[1]} vacío")
+
+        # Property cards moved lower
+        self._draw_individual_metrics(surface, tree, accent_color, x_offset)
+
+    def _draw_individual_metrics(self, surface, tree, accent_color, x_offset):
+        """Only Raíz, Profundidad, Hojas - each in its own cajita (made thinner)"""
+        metrics = self._get_tree_metrics(tree)
+        card_w = 142
+        card_h = 48   # made thinner as requested
+        y = WINDOW_H - 125   # moved much lower, near the bottom
+
+        for i, (label, value) in enumerate(metrics):
+            card_x = x_offset + 25 + i * (card_w + 18)
+            card_rect = pygame.Rect(card_x, y, card_w, card_h)
+
+            pygame.draw.rect(surface, BG_SURFACE2, card_rect, border_radius=9)
+            pygame.draw.rect(surface, accent_color, card_rect, width=2, border_radius=9)
+
+            lbl = self.fonts["body_xs"].render(label.upper(), True, TEXT_DIM)
+            val = self.fonts["label_md"].render(str(value), True, accent_color)
+
+            surface.blit(lbl, (card_rect.x + 12, card_rect.y + 7))
+            surface.blit(val, (card_rect.x + 12, card_rect.y + 25))
+
+    def _get_tree_metrics(self, tree):
+        root = tree.getRoot()
+        if not root:
+            return [("RAÍZ", "—"), ("PROFUNDIDAD", "—"), ("HOJAS", "—")]
+
+        root_value = root.getValue() if hasattr(root, 'getValue') else getattr(root, 'code', '—')
+
+        return [
+            ("RAÍZ", root_value),
+            ("PROFUNDIDAD", tree.getHeight()),
+            ("HOJAS", tree.countLeaves()),
         ]
 
-        for label, avl_val, bst_val in metrics:
-            # Tarjeta
-            card_rect = pygame.Rect(panel_rect.x + 30, y, panel_rect.width - 60, 52)
-            pygame.draw.rect(surface, BG_SURFACE2, card_rect, border_radius=10)
+    def _draw_empty_tree(self, surface, viewport, text):
+        msg = self.fonts["body_sm"].render(text, True, TEXT_DIM)
+        surface.blit(msg, msg.get_rect(center=viewport.center))
 
-            lbl = self.fonts["body_sm"].render(label, True, TEXT_SECONDARY)
-            surface.blit(lbl, (card_rect.x + 16, card_rect.y + 8))
+    def _draw_buttons(self, surface):
+        self.btn_play.draw(surface)
+        self.btn_back.draw(surface)
 
-            avl_text = self.fonts["label_md"].render(avl_val, True, PRIMARY)
-            surface.blit(avl_text, (card_rect.x + 16, card_rect.y + 26))
-
-            bst_text = self.fonts["label_md"].render(bst_val, True, DARK_ACCENT)
-            surface.blit(bst_text, (card_rect.right - bst_text.get_width() - 16, card_rect.y + 26))
-
-            y += 68
-
-        # Botón Reproducir
-        btn_rect = pygame.Rect(panel_rect.x + 30, y + 20, panel_rect.width - 60, BTN_H + 10)
-        btn = UIButton(btn_rect, "▶ REPRODUCIR INSERCIONES PASO A PASO", self.fonts["label_md"],
-                       bg_color=PRIMARY, text_color=BG_DEEP, border_color=PRIMARY)
-        btn.draw(surface)
-
-        # Mini historial de inserciones
-        y += 100
-        hist_title = self.fonts["label_sm"].render("Inserciones realizadas:", True, TEXT_DIM)
-        surface.blit(hist_title, (panel_rect.x + 30, y))
+    def _start_playback(self):
+        print("▶ Reproducción paso a paso iniciada (próxima implementación)")
 
     def set_insertion_list(self, flights):
-        """Recibe la lista de vuelos para la reproducción paso a paso"""
         self.insertion_list = flights
         self.current_step = 0
