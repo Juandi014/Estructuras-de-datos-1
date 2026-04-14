@@ -1,15 +1,3 @@
-"""
-json_exporter.py
-----------------
-Handles exporting the current AVL tree state to a JSON file.
-Opens a native save dialog so the user can choose the destination.
-
-The exported file preserves the full tree structure including:
-  - All flight data fields.
-  - Tree metadata (height, balance factor, depth, critical flag).
-  - Nested left/right children (izquierdo / derecho).
-  - The 'tipo' field set to "TOPOLOGIA" so it can be reloaded later.
-"""
 
 import json
 import tkinter as tk

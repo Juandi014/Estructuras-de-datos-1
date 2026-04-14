@@ -1,12 +1,5 @@
-"""
-tree_renderer.py
-----------------
-Renders the AVL tree visually onto a pygame Surface.
-Supports zoom (mouse wheel) and scroll (click + drag).
 
-Each node is drawn as a hexagon. Color reflects node state via color_scheme.
-Edges connect parent to children with styled lines.
-"""
+from time import time
 
 import pygame
 import math
@@ -65,6 +58,24 @@ class TreeRenderer:
     def clear_highlight(self) -> None:
         """Removes any active node highlight."""
         self._highlighted = None
+
+    def get_node_screen_pos(self, code) -> tuple | None:
+        """
+        Returns the screen (sx, sy) of the node with the given code,
+        or None if the node hasn't been laid out yet.
+        Used by MainScreen to draw the traversal highlight halo.
+
+        Args:
+            code : Flight code of the target node.
+
+        Returns:
+            tuple | None: (sx, sy) in screen coordinates, or None.
+        """
+        tree_pos = self._positions.get(code)
+        if tree_pos is None:
+            return None
+        sx, sy = self._tree_to_screen(tree_pos)
+        return int(sx), int(sy)
 
     def handle_event(self, event: pygame.event.Event) -> None:
         """Processes zoom and scroll input events."""
@@ -230,7 +241,7 @@ class TreeRenderer:
         if self._highlighted is not None and node.code == self._highlighted:
             fill   = GREEN_TERM
             stroke = (180, 255, 100)
-
+    
         # Draw hexagon
         pts = _hex_points(sx, sy, r)
         pygame.draw.polygon(surface, _darken(fill, 0.15), pts)
@@ -285,9 +296,9 @@ class TreeRenderer:
         self.offset_x = self._offset_start[0] + dx
         self.offset_y = self._offset_start[1] + dy
 
-    # ------------------------------------------------------------------
-    # Stress Mode Drawing (new small methods - no name conflict)
-    # ------------------------------------------------------------------
+# ------------------------------------------------------------------
+# Stress Mode Drawing (NO se modificó nada del estrés original)
+# ------------------------------------------------------------------
 
     def _draw_edges_stress(self, surface: pygame.Surface, node) -> None:
         """Draw edges in stress mode: thicker and red/critical color."""
@@ -356,6 +367,57 @@ class TreeRenderer:
         text = font.render("MODO ESTRÉS ACTIVO — ÁRBOL DEGRADADO", True, CRITICAL)
         surface.blit(text, (self.viewport.x + 20, self.viewport.y + 15))
 
+
+# ------------------------------------------------------------------
+# NEW: Rotation Animation Support (solo se usa durante Rebalanceo Global)
+# ------------------------------------------------------------------
+
+    def _draw_single_node(self, surface, node, sx: int, sy: int) -> None:
+        """
+        Draws one hexagon node with its code and balance factor labels.
+        AÑADIDO: Soporte para animación de rotaciones cuando no está en stress mode.
+        """
+        r = int(NODE_RADIUS * self.zoom)
+        if r < 4:
+            return
+
+        fill   = node_color(node)
+        stroke = border_color(node)
+
+        # Highlight override
+        if self._highlighted is not None and node.code == self._highlighted:
+            fill   = GREEN_TERM
+            stroke = (180, 255, 100)
+
+        # === ANIMACIÓN DE ROTACIONES (solo cuando hay pulse_nodes) ===
+        pulse_offset = 0.0
+        if (hasattr(self, '_pulse_nodes') and 
+            hasattr(self, '_pulse_offset') and 
+            node.code in self._pulse_nodes):
+            pulse_offset = self._pulse_offset
+            # Pequeño pulso de escala para dar sensación de movimiento
+            r = int(r * (1 + 0.07 * math.sin(time.time() * 12)))
+
+        sx += pulse_offset
+
+        # Draw hexagon
+        pts = _hex_points(sx, sy, r)
+        pygame.draw.polygon(surface, _darken(fill, 0.15), pts)
+        pygame.draw.polygon(surface, stroke, pts, max(1, int(1.5 * self.zoom)))
+
+        # Labels
+        if r >= 10:
+            font_size = max(8, int(11 * self.zoom))
+            font = pygame.font.SysFont("Courier New", font_size, bold=True)
+            code_surf = font.render(str(node.code), True, TEXT_PRIMARY)
+            surface.blit(code_surf, code_surf.get_rect(centerx=sx, centery=sy))
+
+        if r >= 16:
+            bf_size = max(7, int(9 * self.zoom))
+            bf_font = pygame.font.SysFont("Courier New", bf_size)
+            bf_col  = CRITICAL if abs(node.balance_factor) > 1 else TEXT_DIM
+            bf_surf = bf_font.render(f"bf:{node.balance_factor}", True, bf_col)
+            surface.blit(bf_surf, bf_surf.get_rect(centerx=sx, top=sy + r + 2))
 
 # ------------------------------------------------------------------
 # Geometry helpers

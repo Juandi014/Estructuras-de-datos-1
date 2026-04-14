@@ -1,19 +1,3 @@
-"""
-history_stack.py
-----------------
-Undo stack for the SkyBalance system (req. 1.2).
-
-Each entry stores:
-  - action  : Type of operation performed (INSERT, DELETE, UPDATE, CANCEL_SUBTREE).
-  - code    : Flight code of the affected node (for display purposes).
-  - snapshot: A deep copy of the AVL tree state BEFORE the action was applied.
-
-This allows the system to restore the tree to any previous state by
-popping the stack and calling avl_tree = entry.snapshot.
-
-Stack size is capped at MAX_SIZE to avoid excessive memory usage.
-"""
-
 
 class HistoryStack:
   # Maximum number of undo steps stored in memory.
