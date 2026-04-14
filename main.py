@@ -23,10 +23,6 @@ from user_interface.color_scheme import (
 from user_interface.screen_splash import SplashScreen
 from user_interface.screen_main import MainScreen
 from user_interface.screen_stress import StressScreen
-from user_interface.screen_versions import VersionsScreen
-from user_interface.screen_cancel import CancelScreen
-from user_interface.screen_rentability import RentabilityScreen
-from user_interface.screen_home import HomeScreen
 from user_interface.screen_compare import CompareScreen
 from in_out.json_loader import load_file
 from logic.insertion_queue import InsertionQueue
@@ -40,17 +36,11 @@ from user_interface.screen_queue import QueueScreen
 # ------------------------------------------------------------------
 
 SCREEN_SPLASH  = "splash"
-SCREEN_HOME = "home"
 SCREEN_MAIN    = "main"
-SCREEN_INSERT  = "insert"
 SCREEN_QUEUE   = "queue"
 SCREEN_COMPARE = "compare"
-SCREEN_BUILD   = "build"
+SCREEN_STRESS  = "stress"
 
-SCREEN_STRESS   = "stress"
-SCREEN_VERSIONS = "versions"
-SCREEN_CANCEL   = "cancel"
-SCREEN_RENT      = "rentability"
 
 class App:
     """
@@ -72,20 +62,17 @@ class App:
         self.insertion_queue = InsertionQueue()
         self.history         = HistoryStack()
         self.critical_depth  = 0
+        self.last_load_mode  = None          # "INSERCION" | "TOPOLOGIA" | None
         self.current_screen  = SCREEN_SPLASH
 
         # Screen instances
         self.screens = {}
         self._init_splash()
-        self._init_home()
         self._init_compare()
         self._init_main()
-        self._init_build()
         self._init_stress()
-        self._init_versions()
-        self._init_cancel()
-        self._init_rentability()
         self._init_queue()
+
     # ------------------------------------------------------------------
     # Screen initialization
     # ------------------------------------------------------------------
@@ -99,76 +86,39 @@ class App:
             on_depth = self._handle_depth_change,
         )
 
-    def _init_home(self) -> None:
-        """New Home/Dashboard screen (after loading a file)."""
-        self.screens[SCREEN_HOME] = HomeScreen(
-            fonts             = self.fonts,
-            avl_tree          = self.avl_tree,
-            on_switch_screen  = self._switch_to_screen
-        )
-
     def _init_main(self) -> None:
         """Creates the S1 main tree screen with its callbacks."""
         self.screens[SCREEN_MAIN] = MainScreen(
-            fonts    = self.fonts,
-            avl_tree = self.avl_tree,
-            on_undo  = self._handle_undo,
+            fonts            = self.fonts,
+            avl_tree         = self.avl_tree,
+            on_undo          = self._handle_undo,
+            on_stress_screen = self._handle_enter_stress,
         )
-    
+
     def _init_compare(self) -> None:
+        """Creates the comparison screen. Always goes back to MAIN."""
         self.screens[SCREEN_COMPARE] = CompareScreen(
-            fonts=self.fonts,
-            avl_tree=self.avl_tree,
-            bst_tree=self.bst_tree,
-            on_switch_screen=self._switch_to_screen
+            fonts            = self.fonts,
+            avl_tree         = self.avl_tree,
+            bst_tree         = self.bst_tree,
+            on_switch_screen = lambda: self._switch_to_screen(SCREEN_MAIN),
         )
-    
+
     def _init_stress(self) -> None:
         """Creates the S3 Stress Mode screen."""
         self.screens[SCREEN_STRESS] = StressScreen(
-            fonts              = self.fonts,
-            avl_tree           = self.avl_tree,
-            on_switch_to_main  = lambda: self._switch_to_screen(SCREEN_MAIN)
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            on_switch_to_main = lambda: self._leave_stress_screen(),
         )
 
-    def _init_versions(self) -> None:
-        """Creates the S4 Versions screen."""
-        self.screens[SCREEN_VERSIONS] = VersionsScreen(
-            fonts             = self.fonts,
-            avl_tree          = self.avl_tree,
-            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
-        )
-
-    def _init_cancel(self) -> None:
-        """Creates the S6 Mass Cancellation dialog screen."""
-        self.screens[SCREEN_CANCEL] = CancelScreen(
-            fonts             = self.fonts,
-            avl_tree          = self.avl_tree,
-            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
-        )
-    
-    def _init_rentability(self) -> None:
-        """Creates the S7 Intelligent Elimination by Rentability screen."""
-        self.screens[SCREEN_RENT] = RentabilityScreen(
-            fonts             = self.fonts,
-            avl_tree          = self.avl_tree,
-            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
-        )
     def _init_queue(self) -> None:
         """Creates the Queue screen (Requirement 3 - Cola de Inserciones)."""
         self.screens[SCREEN_QUEUE] = QueueScreen(
-            fonts           = self.fonts,
-            avl_tree        = self.avl_tree,
-            insertion_queue = self.insertion_queue,
-            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN)
-        )
-
-    def _init_build(self) -> None:
-        """Creates the S2 build-from-scratch screen (reuses MainScreen)."""
-        self.screens[SCREEN_BUILD] = MainScreen(
-            fonts    = self.fonts,
-            avl_tree = self.avl_tree,
-            on_undo  = self._handle_undo,
+            fonts             = self.fonts,
+            avl_tree          = self.avl_tree,
+            insertion_queue   = self.insertion_queue,
+            on_switch_to_main = lambda: self._switch_to_screen(SCREEN_MAIN),
         )
 
     # ------------------------------------------------------------------
@@ -178,31 +128,42 @@ class App:
     def _handle_load_file(self) -> None:
         """
         Triggered by the splash screen's LOAD FILE button.
-        Opens the file dialog, loads the tree, and transitions to S1.
+        - INSERCION mode  → shows CompareScreen first, then user goes to MAIN.
+        - TOPOLOGIA mode  → goes directly to MAIN.
+        Re-initializes screens so TreeRenderers center on the new root.
         """
         splash = self.screens[SCREEN_SPLASH]
         try:
             mode = load_file(self.avl_tree, self.bst_tree)
+            self.last_load_mode          = mode
             self.avl_tree.critical_depth = self.critical_depth
+            self._init_main()
+            self._init_compare()
             splash.set_status(f"Archivo cargado — modo {mode}", success=True)
-            self.current_screen = SCREEN_HOME
+            if mode == "INSERCION":
+                self.current_screen = SCREEN_COMPARE
+            else:
+                self.current_screen = SCREEN_MAIN
         except ValueError as e:
             splash.set_status(str(e), success=False)
 
     def _handle_build_from_scratch(self) -> None:
         """
-        Triggered by the CREAR DESDE CERO button.
-        Resets both trees and transitions to S2 (build screen).
+        Triggered by the CREAR DESDE CERO button on the splash.
+        Resets both trees and goes directly to MAIN.
         """
         self.avl_tree.__init__()
         self.bst_tree.__init__()
         self.history.clear()
+        self.last_load_mode          = None
         self.avl_tree.critical_depth = self.critical_depth
-        self.current_screen = SCREEN_HOME
+        self._init_main()
+        self._init_compare()
+        self.current_screen = SCREEN_MAIN
 
     def _handle_depth_change(self, value: int) -> None:
         """
-        Triggered when the user changes the critical depth value on the splash.
+        Triggered when the user changes the critical depth on the splash.
         Updates the tree's penalty threshold immediately if a tree is loaded.
         """
         self.critical_depth          = value
@@ -212,7 +173,7 @@ class App:
 
     def _handle_undo(self) -> None:
         """
-        Triggered by Ctrl+Z on S1.
+        Triggered by Ctrl+Z on MAIN.
         Pops the last snapshot from the history stack and restores the tree.
         """
         entry = self.history.pop()
@@ -226,11 +187,55 @@ class App:
         self.avl_tree.critical_depth = snapshot.critical_depth
         main.set_status(
             f"Deshecho: {entry['action']} — {entry['code']}", success=True)
-        
+
+    def _leave_stress_screen(self) -> None:
+        """Disables stress mode, resets the toggle in MainScreen, goes to MAIN."""
+        self.avl_tree.disableStressMode()
+        main = self.screens.get(SCREEN_MAIN)
+        if main and hasattr(main, 'reset_stress_toggle'):
+            main.reset_stress_toggle()
+        elif main and hasattr(main, 'stress_toggle'):
+            main.stress_toggle.state = False
+            main.stress_enabled      = False
+        self.current_screen = SCREEN_MAIN
+
+    def _handle_enter_stress(self) -> None:
+        """
+        Triggered when the user activates the Stress Mode toggle in MainScreen.
+        Calls on_enter() so the screen re-enables stress mode on every visit.
+        """
+        stress = self.screens.get(SCREEN_STRESS)
+        if stress and hasattr(stress, 'on_enter'):
+            stress.on_enter()
+        else:
+            self.avl_tree.enableStressMode()
+        self.current_screen = SCREEN_STRESS
+
     def _switch_to_screen(self, screen_id: str) -> None:
-        """Safe way to change current screen."""
-        if screen_id in self.screens:
-            self.current_screen = screen_id
+        """
+        Safe way to change the current screen from any callback.
+        Handles stress mode activation/deactivation automatically.
+        """
+        if screen_id not in self.screens:
+            return
+
+        # Leaving stress mode
+        if self.current_screen == SCREEN_STRESS and screen_id != SCREEN_STRESS:
+            self.avl_tree.disableStressMode()
+            main = self.screens.get(SCREEN_MAIN)
+            if main and hasattr(main, 'reset_stress_toggle'):
+                main.reset_stress_toggle()
+            elif main and hasattr(main, 'stress_toggle'):
+                main.stress_toggle.state = False
+                main.stress_enabled      = False
+
+        # Entering stress mode
+        if screen_id == SCREEN_STRESS:
+            stress = self.screens.get(SCREEN_STRESS)
+            if stress and hasattr(stress, 'on_enter'):
+                stress.on_enter()
+
+        self.current_screen = screen_id
 
     # ------------------------------------------------------------------
     # Main loop
@@ -275,10 +280,24 @@ class App:
     # Navigation bar
     # ------------------------------------------------------------------
 
+    def _get_nav_items(self) -> list:
+        """
+        Builds the nav list dynamically.
+        COMPARAR only appears after loading an INSERCION file.
+        """
+        items = [
+            ("AVL",    SCREEN_MAIN),
+            ("COLA",   SCREEN_QUEUE),
+            ("ESTRÉS", SCREEN_STRESS),
+        ]
+        if self.last_load_mode == "INSERCION":
+            items.insert(2, ("COMPARAR", SCREEN_COMPARE))
+        return items
+
     def _draw_nav(self) -> None:
         """
         Draws the top navigation bar with the logo and screen buttons.
-        Buttons are only clickable once a file has been loaded.
+        Buttons are greyed out on the splash screen (no tree loaded yet).
         """
         nav_rect = pygame.Rect(0, 0, WINDOW_W, NAV_H)
         pygame.draw.rect(self.surface, (10, 8, 6), nav_rect)
@@ -289,19 +308,8 @@ class App:
         self.surface.blit(logo, (NAV_PADDING, NAV_H // 2 - logo.get_height() // 2))
 
         tree_loaded = self.avl_tree.getRoot() is not None
-        nav_items = [
-            ("AVL",       SCREEN_MAIN),
-            ("HOME",      SCREEN_HOME),
-            ("CONSTRUIR", SCREEN_BUILD),
-            ("COLA",      SCREEN_QUEUE),
-            ("COMPARAR",  SCREEN_COMPARE),
-            ("ESTRÉS",    SCREEN_STRESS),
-            ("VERSIONES", SCREEN_VERSIONS),
-            ("CANCELAR",  SCREEN_CANCEL),
-            ("RENTABILIDAD", SCREEN_RENT),
-        ]
         bx = 180
-        for label, screen_id in nav_items:
+        for label, screen_id in self._get_nav_items():
             is_active = self.current_screen == screen_id
             color = AMBER if is_active else (
                     TEXT_SECONDARY if tree_loaded else (50, 40, 30))
@@ -312,31 +320,19 @@ class App:
     def _handle_nav_click(self, pos: tuple) -> None:
         """
         Checks if a nav button was clicked and transitions to that screen.
-        Only works if a tree is loaded.
+        Only works if a tree is loaded and the click is inside the nav bar.
         """
         if self.avl_tree.getRoot() is None:
             return
         if pos[1] > NAV_H:
             return
 
-        nav_items = [
-            ("AVL",       SCREEN_MAIN),
-            ("HOME",      SCREEN_HOME),
-            ("CONSTRUIR", SCREEN_BUILD),
-            ("COLA",      SCREEN_QUEUE),
-            ("COMPARAR",  SCREEN_COMPARE),
-            ("ESTRÉS",    SCREEN_STRESS),
-            ("VERSIONES", SCREEN_VERSIONS),
-            ("CANCELAR",  SCREEN_CANCEL),
-            ("RENTABILIDAD", SCREEN_RENT),
-
-        ]   
         bx = 180
-        for label, screen_id in nav_items:
-            btn = self.fonts["label_sm"].render(label, True, AMBER)
+        for label, screen_id in self._get_nav_items():
+            btn      = self.fonts["label_sm"].render(label, True, AMBER)
             btn_rect = pygame.Rect(bx, 0, btn.get_width(), NAV_H)
             if btn_rect.collidepoint(pos):
-                self.current_screen = screen_id
+                self._switch_to_screen(screen_id)
                 return
             bx += btn.get_width() + 24
 

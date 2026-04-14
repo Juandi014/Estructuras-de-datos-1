@@ -1,10 +1,4 @@
-"""
-panel_ui.py
------------
-Reusable UI components for side panels in SkyBalance AVL system.
-Designed to keep code clean and distributed. All components are small 
-and single-responsibility. Style matches the existing buttons in screen_main.py.
-"""
+
 
 import pygame
 from user_interface.color_scheme import (

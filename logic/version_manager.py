@@ -1,20 +1,4 @@
-"""
-version_manager.py
-------------------
-Named version manager for the SkyBalance system (req. 2).
 
-Allows the user to manually save snapshots of the AVL tree with a
-descriptive name and restore any of them at any point.
-
-Difference from HistoryStack:
-  - HistoryStack: automatic, saves every action, used for Ctrl+Z undo.
-  - VersionManager: manual, user decides when to save, accessed by name.
-
-Each version stores:
-  - name      : User-defined label (e.g. "before stress test").
-  - snapshot  : Deep copy of the AVL tree at the moment of saving.
-  - timestamp : When the version was saved (for display purposes).
-"""
 
 from datetime import datetime
 

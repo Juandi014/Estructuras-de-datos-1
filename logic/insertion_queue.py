@@ -1,16 +1,3 @@
-"""
-insertion_queue.py
-------------------
-Simulates concurrent flight insertions for the SkyBalance system (req. 3).
-
-Workflow:
-  1. The user schedules one or more FlightNode objects into the queue.
-  2. The user triggers processing via a UI button.
-  3. The processor takes flights one by one, inserts them into the AVL tree,
-     and reports any critical depth conflicts found after each insertion.
-
-The queue is a standard FIFO structure — first scheduled, first inserted.
-"""
 
 from collections import deque
 
