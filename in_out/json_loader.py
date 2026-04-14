@@ -90,3 +90,46 @@ def _detect_mode(data: dict) -> str:
         "- a 'vuelos' array (insertion)."
     )
 
+
+# ------------------------------------------------------------------
+# Loading strategies
+# ------------------------------------------------------------------
+
+def _load_by_mode(mode: str, data: dict, avl_tree, bst_tree) -> None:
+    if mode == "TOPOLOGIA":
+        _load_topology(data, avl_tree)
+    else:
+        _load_insertion(data, avl_tree, bst_tree)
+
+
+def _load_topology(data: dict, avl_tree) -> None:
+    """Loads topology JSON. Strips 'tipo' if present."""
+    tree_data = {k: v for k, v in data.items() if k != "tipo"}
+
+    if "codigo" not in tree_data:
+        raise ValueError("Topology JSON is missing the root node ('codigo').")
+
+    avl_tree.fromTopology(tree_data)
+
+
+def _load_insertion(data: dict, avl_tree, bst_tree) -> None:
+    """Loads insertion JSON."""
+    flights = data.get("vuelos")
+
+    if not flights or not isinstance(flights, list):
+        raise ValueError("Insertion JSON is missing the 'vuelos' list or it is empty.")
+
+    sorted_flights = _sort_by_priority(flights)
+
+    avl_tree.fromInsertionList(sorted_flights)
+
+    if bst_tree is not None:
+        bst_tree.fromInsertionList(sorted_flights)
+
+
+# ------------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------------
+
+def _sort_by_priority(flights: list) -> list:
+    return sorted(flights, key=lambda f: f.get("prioridad", 0))
